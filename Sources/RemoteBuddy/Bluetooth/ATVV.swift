@@ -44,6 +44,7 @@ struct ATVVSession {
     private var sequence: UInt16 = 0
     private var decoder = ADPCMDecoder()
     private var synchronizedForNextStart = false
+    private var audioActive = false
 
     mutating func accept(_ capabilities: ATVVCapabilities) -> Bool {
         guard let codec = capabilities.preferredCodec else { return false }
@@ -52,6 +53,7 @@ struct ATVVSession {
         decoder.reset(predictor: 0, stepIndex: 0)
         sequence = 0
         synchronizedForNextStart = false
+        audioActive = false
         return true
     }
 
@@ -109,13 +111,14 @@ struct ATVVSession {
         sequence = 0
         decoder.reset(predictor: 0, stepIndex: 0)
         synchronizedForNextStart = false
+        audioActive = false
     }
 
     mutating func applySync(codec: ATVVCodec, sequence: UInt16, predictor: Int16, stepIndex: UInt8) {
         self.codec = codec
         self.sequence = sequence
         decoder.reset(predictor: predictor, stepIndex: stepIndex)
-        synchronizedForNextStart = true
+        synchronizedForNextStart = !audioActive
     }
 
     mutating func begin(codec: ATVVCodec, streamID: UInt8) {
@@ -125,6 +128,12 @@ struct ATVVSession {
             sequence = 0
             decoder.reset(predictor: 0, stepIndex: 0)
         }
+        synchronizedForNextStart = false
+        audioActive = true
+    }
+
+    mutating func end() {
+        audioActive = false
         synchronizedForNextStart = false
     }
 
@@ -138,6 +147,11 @@ struct ATVVSession {
     func closeCommand() -> Data? {
         guard let capabilities else { return nil }
         return capabilities.version == .v04 ? Data([0x0d]) : Data([0x0d, streamID])
+    }
+
+    func closeAllCommand() -> Data? {
+        guard let capabilities else { return nil }
+        return capabilities.version == .v04 ? Data([0x0d]) : Data([0x0d, 0xff])
     }
 
     func keepAliveCommand() -> Data? {

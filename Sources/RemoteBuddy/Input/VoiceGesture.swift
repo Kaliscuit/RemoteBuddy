@@ -19,6 +19,7 @@ struct VoiceGestureStateMachine {
 
     private(set) var toggleActive = false
     private var pressState: PressState = .idle
+    var isPressed: Bool { pressState != .idle }
 
     mutating func pressDown() -> [VoiceGestureAction] {
         guard pressState == .idle else { return [] }
@@ -32,7 +33,8 @@ struct VoiceGestureStateMachine {
     }
 
     mutating func holdThresholdReached() -> [VoiceGestureAction] {
-        guard case .pending = pressState else { return [] }
+        // A press that ends toggle recording must never turn into a new hold.
+        guard case .pending(stoppedExistingToggle: false) = pressState else { return [] }
         pressState = .holding
         return [.fnDown]
     }
@@ -57,13 +59,19 @@ struct VoiceGestureStateMachine {
 
     mutating func reset() -> [VoiceGestureAction] {
         let needsFnUp = pressState == .holding
+        let needsToggleOff = toggleActive
         pressState = .idle
         toggleActive = false
-        return needsFnUp ? [.fnUp, .closeMicrophone] : [.closeMicrophone]
+        return (needsFnUp ? [.fnUp] : []) + (needsToggleOff ? [.fnSpace] : []) + [.closeMicrophone]
     }
 }
 
-final class KeyboardShortcutSender {
+protocol VoiceKeyboard {
+    func postShortcut(_ shortcut: KeyboardMapping, isDown: Bool, autoRepeat: Bool)
+    func tapShortcut(_ shortcut: KeyboardMapping)
+}
+
+final class KeyboardShortcutSender: VoiceKeyboard {
     static let fnKeyCode: CGKeyCode = 0x3f
     static let spaceKeyCode: CGKeyCode = 0x31
 

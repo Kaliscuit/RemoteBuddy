@@ -66,6 +66,7 @@
 "正在传输遥控器麦克风" = "Streaming remote microphone audio";
 "语音正常 · %@ 帧 · 峰值 %@" = "Audio OK · %@ frames · Peak %@";
 "语音流为空 · 请重试" = "No audio received · Please try again";
+"语音连接超时，已复位 · 请重试" = "Voice connection timed out and was reset · Please try again";
 "遥控器拒绝打开麦克风 (0x%04X)" = "The remote refused to open the microphone (0x%04X)";
 "长按说话中 · %@ 已按下" = "Hold to talk · %@ held";
 "长按结束 · 快捷键已松开" = "Hold ended · Shortcut released";

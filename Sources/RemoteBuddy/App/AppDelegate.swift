@@ -150,7 +150,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        bluetooth?.stop()
+        // Fn+Space consists of events scheduled over 70 ms. Let its release
+        // finish before exiting so WeChat input is not left recording/holding Fn.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
+        bluetooth?.stop()
+        audio.stop()
         buttons.stop()
         hciSource.stop()
         hciService.stop()
