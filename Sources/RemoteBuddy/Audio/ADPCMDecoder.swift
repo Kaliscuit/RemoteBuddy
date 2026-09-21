@@ -27,8 +27,10 @@ struct ADPCMDecoder {
     mutating func decode<S: Sequence>(_ bytes: S) -> [Int16] where S.Element == UInt8 {
         var result: [Int16] = []
         for byte in bytes {
-            result.append(decodeNibble(Int(byte & 0x0f)))
+            // Google Voice over BLE 1.0, section 4.2: high nibble first.
+            // IMA WAV packs nibbles differently; ATVV is not an IMA WAV block.
             result.append(decodeNibble(Int(byte >> 4)))
+            result.append(decodeNibble(Int(byte & 0x0f)))
         }
         return result
     }

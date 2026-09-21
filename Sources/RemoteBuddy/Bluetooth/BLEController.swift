@@ -21,6 +21,12 @@ final class BLEController: NSObject, CBCentralManagerDelegate, CBPeripheralDeleg
     private var streamFrameCount = 0
     private var streamPeak = 0
     private var receivedAudioPackets = 0
+    private var streamStartedAt: TimeInterval = 0
+    private var firstPacketDelay: TimeInterval?
+    private var previousPacketTime: TimeInterval?
+    private var maxPacketGap: TimeInterval = 0
+    private var decodedAudioDuration: TimeInterval = 0
+    private var gainClippedSamples = 0
     private let audioDiagnostics = Logger(subsystem: "local.codex.RemoteMic", category: "audio")
     private var voiceGesture = VoiceGestureStateMachine()
     private let keyboard = KeyboardShortcutSender()
@@ -136,6 +142,12 @@ final class BLEController: NSObject, CBCentralManagerDelegate, CBPeripheralDeleg
         if characteristic.uuid == audioUUID {
             receivedAudioPackets += 1
             if streaming, !shortcutsSuspended, let samples = session.decodeAudio(data), let codec = session.codec {
+                let now = ProcessInfo.processInfo.systemUptime
+                if firstPacketDelay == nil { firstPacketDelay = now - streamStartedAt }
+                if let previousPacketTime { maxPacketGap = max(maxPacketGap, now - previousPacketTime) }
+                previousPacketTime = now
+                decodedAudioDuration += Double(samples.count) / Double(codec.sampleRate)
+                gainClippedSamples += samples.reduce(0) { $0 + (abs(Int($1)) > 8192 ? 1 : 0) }
                 streamFrameCount += 1
                 streamPeak = max(streamPeak, samples.reduce(into: 0) { peak, sample in
                     peak = max(peak, abs(Int(sample)))
@@ -162,6 +174,7 @@ final class BLEController: NSObject, CBCentralManagerDelegate, CBPeripheralDeleg
                 if let value = session.openCommand() { write(value) }
             }
         case .audioSync(let codec, let sequence, let predictor, let stepIndex):
+            audioDiagnostics.notice("Voice sync codec=\(codec.rawValue) sourceRate=\(codec.sampleRate) sequence=\(sequence)")
             session.applySync(codec: codec, sequence: sequence, predictor: predictor, stepIndex: stepIndex)
         case .audioStart(let reason, let codec, let streamID):
             if reason == 0x03 {
@@ -176,8 +189,14 @@ final class BLEController: NSObject, CBCentralManagerDelegate, CBPeripheralDeleg
             streamFrameCount = 0
             streamPeak = 0
             receivedAudioPackets = 0
+            streamStartedAt = ProcessInfo.processInfo.systemUptime
+            firstPacketDelay = nil
+            previousPacketTime = nil
+            maxPacketGap = 0
+            decodedAudioDuration = 0
+            gainClippedSamples = 0
             audio.clear()
-            audioDiagnostics.notice("Voice start suspended=\(self.shortcutsSuspended) \(self.audio.diagnosticSummary, privacy: .public)")
+            audioDiagnostics.notice("Voice start decoder=ATVV-high-first codec=\(codec.rawValue) sourceRate=\(codec.sampleRate) suspended=\(self.shortcutsSuspended) \(self.audio.diagnosticSummary, privacy: .public)")
             startKeepAlive()
             onStreaming?(true)
             onStatus?(shortcutsSuspended ? L10n.tr("按键设置：正在识别语音键") : L10n.tr("正在传输遥控器麦克风"))
@@ -185,6 +204,8 @@ final class BLEController: NSObject, CBCentralManagerDelegate, CBPeripheralDeleg
             let frames = streamFrameCount
             let peak = streamPeak
             audioDiagnostics.notice("Voice stop reason=\(reason) packets=\(self.receivedAudioPackets) decodedFrames=\(frames) peak=\(peak) suspended=\(self.shortcutsSuspended) \(self.audio.diagnosticSummary, privacy: .public)")
+            let elapsed = ProcessInfo.processInfo.systemUptime - streamStartedAt
+            audioDiagnostics.notice("Voice quality durationMs=\(elapsed * 1000) decodedAudioMs=\(self.decodedAudioDuration * 1000) firstPacketMs=\((self.firstPacketDelay ?? -1) * 1000) maxPacketGapMs=\(self.maxPacketGap * 1000) gainClippedSamples=\(self.gainClippedSamples)")
             finishStream()
             if reason == 0x02 {
                 onVoiceButtonActivity?(false)

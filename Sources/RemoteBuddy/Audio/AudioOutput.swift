@@ -11,6 +11,7 @@ final class SampleRing {
     private var count = 0
     private var renderCalls = 0
     private var renderedSamples = 0
+    private var requestedSamples = 0
 
     func append(_ samples: [Int16], sampleRate: Int) {
         lock.lock()
@@ -34,6 +35,7 @@ final class SampleRing {
         lock.lock()
         defer { lock.unlock() }
         renderCalls += 1
+        requestedSamples += requested
         renderedSamples += min(count, requested)
         for index in 0..<requested {
             if count > 0 {
@@ -53,13 +55,14 @@ final class SampleRing {
         count = 0
         renderCalls = 0
         renderedSamples = 0
+        requestedSamples = 0
         lock.unlock()
     }
 
     var diagnosticSummary: String {
         lock.lock()
         defer { lock.unlock() }
-        return "queued=\(count) renderCalls=\(renderCalls) renderedSamples=\(renderedSamples)"
+        return "queued=\(count) renderCalls=\(renderCalls) renderedSamples=\(renderedSamples) requestedSamples=\(requestedSamples) zeroFilledSamples=\(requestedSamples - renderedSamples)"
     }
 }
 
