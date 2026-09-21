@@ -97,7 +97,12 @@ approval in System Settings before the first launch.
 
 Open **Button Settings…** from the menu bar to edit mappings. While settings are
 open, the remote selects buttons for editing and mapped actions/audio output pause.
-Direction and volume repeat while held, with a two-second forced release safeguard.
+Every ordinary remote button repeats after being held for about 0.34 seconds,
+with no filtering by physical button or mapped action type. This includes Delete,
+page navigation, shortcuts, volume, mute, play/pause, app launches and websites.
+Disabled actions remain no-ops. Repeats target a 65 ms interval with independent
+per-button timers and stop on release. A two-second forced release remains;
+release and press again to continue. Voice tap/hold behavior is unchanged.
 
 ## Build from source
 

@@ -27,8 +27,7 @@ struct RemoteButtonState {
     private var began: [UInt8: TimeInterval] = [:]
     private var nextRepeat: [UInt8: TimeInterval] = [:]
 
-    mutating func update(_ buttons: Set<UInt8>, now: TimeInterval,
-                         repeatableButtons: Set<UInt8> = [3, 4, 5, 6, 12, 13]) -> [RemoteButtonChange] {
+    mutating func update(_ buttons: Set<UInt8>, now: TimeInterval) -> [RemoteButtonChange] {
         suppressed.formIntersection(buttons)
         let accepted = buttons.subtracting(suppressed)
         let released = pressed.subtracting(accepted).sorted()
@@ -36,7 +35,7 @@ struct RemoteButtonState {
         for button in released { began[button] = nil; nextRepeat[button] = nil }
         for button in added {
             began[button] = now
-            if repeatableButtons.contains(button) { nextRepeat[button] = now + 0.34 }
+            nextRepeat[button] = now + 0.34
         }
         pressed = accepted
         return released.map { RemoteButtonChange(button: $0, isDown: false) }

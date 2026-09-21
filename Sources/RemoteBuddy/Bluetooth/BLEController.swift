@@ -20,6 +20,8 @@ final class BLEController: NSObject, CBCentralManagerDelegate, CBPeripheralDeleg
     private var keepAliveTimer: Timer?
     private var streamFrameCount = 0
     private var streamPeak = 0
+    private var receivedAudioPackets = 0
+    private let audioDiagnostics = Logger(subsystem: "local.codex.RemoteMic", category: "audio")
     private var voiceGesture = VoiceGestureStateMachine()
     private let keyboard = KeyboardShortcutSender()
     private var heldVoiceShortcut: KeyboardMapping?
@@ -132,6 +134,7 @@ final class BLEController: NSObject, CBCentralManagerDelegate, CBPeripheralDeleg
             return
         }
         if characteristic.uuid == audioUUID {
+            receivedAudioPackets += 1
             if streaming, !shortcutsSuspended, let samples = session.decodeAudio(data), let codec = session.codec {
                 streamFrameCount += 1
                 streamPeak = max(streamPeak, samples.reduce(into: 0) { peak, sample in
@@ -172,13 +175,16 @@ final class BLEController: NSObject, CBCentralManagerDelegate, CBPeripheralDeleg
             streaming = true
             streamFrameCount = 0
             streamPeak = 0
+            receivedAudioPackets = 0
             audio.clear()
+            audioDiagnostics.notice("Voice start suspended=\(self.shortcutsSuspended) \(self.audio.diagnosticSummary, privacy: .public)")
             startKeepAlive()
             onStreaming?(true)
             onStatus?(shortcutsSuspended ? L10n.tr("按键设置：正在识别语音键") : L10n.tr("正在传输遥控器麦克风"))
         case .audioStop(let reason):
             let frames = streamFrameCount
             let peak = streamPeak
+            audioDiagnostics.notice("Voice stop reason=\(reason) packets=\(self.receivedAudioPackets) decodedFrames=\(frames) peak=\(peak) suspended=\(self.shortcutsSuspended) \(self.audio.diagnosticSummary, privacy: .public)")
             finishStream()
             if reason == 0x02 {
                 onVoiceButtonActivity?(false)

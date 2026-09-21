@@ -91,13 +91,6 @@ struct MappedAction: Codable, Equatable {
     static func key(_ code: UInt16, _ flags: CGEventFlags = []) -> Self {
         .init(kind: .keyboard, shortcut: .init(keyCode: code, modifiers: flags.rawValue))
     }
-    var supportsRepeat: Bool {
-        switch kind {
-        case .keyboard: return shortcut.map { !$0.isChord && !$0.isModifier } ?? false
-        case .volumeUp, .volumeDown: return true
-        default: return false
-        }
-    }
     var title: String {
         switch kind {
         case .keyboard: return shortcut?.displayName ?? L10n.tr("未设置快捷键")

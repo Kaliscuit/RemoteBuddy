@@ -91,9 +91,11 @@ Compatibility bridge connected**. Voice readiness alone does not verify button
 capture; check the profile/helper if the button bridge is still waiting.
 
 **Check.command** performs read-only checks. Service state is not a hardware test:
-press each direction, OK and Back in a text editor; hold and release a direction;
-test voice toggle and hold-to-talk in an app listening to BlackHole. Ordinary
-repeat has a two-second forced release. While Button Settings is open, button
+press each direction, OK and Back in a text editor; holding Back should repeatedly
+delete and stop on release. Test voice toggle and hold-to-talk in an app listening
+to BlackHole. Every ordinary button repeats its mapping, including shortcuts,
+mute, app launches and websites, with independent timers. The two-second forced
+release remains; release and press again to continue. Disabled actions do nothing. While Button Settings is open, button
 output and microphone forwarding are paused.
 
 If Karabiner is installed, exclude this remote to avoid duplicate handling.

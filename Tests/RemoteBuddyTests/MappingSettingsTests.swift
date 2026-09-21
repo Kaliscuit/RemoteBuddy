@@ -57,15 +57,6 @@ final class MappingSettingsTests: XCTestCase {
         XCTAssertEqual(config.action(for: 11), .key(0x33))
         XCTAssertEqual(config.action(for: 2), .disabled)
     }
-    func testRemappedCommandsAndLaunchActionsDoNotRepeat() {
-        XCTAssertFalse(MappedAction.key(0x0d, .maskCommand).supportsRepeat)
-        XCTAssertFalse(MappedAction(kind: .application, value: "/Applications/Safari.app").supportsRepeat)
-        XCTAssertFalse(MappedAction(kind: .mute).supportsRepeat)
-        var state = RemoteButtonState()
-        _ = state.update([3], now: 0, repeatableButtons: [])
-        XCTAssertEqual(state.tick(now: 0.7), [])
-        XCTAssertEqual(state.update([], now: 0.8), [RemoteButtonChange(button: 3, isDown: false)])
-    }
     func testVoiceShortcutsRoundTripAndUnsupportedFlagsFailValidation() throws {
         var config = MappingConfiguration.defaults
         config.voiceToggle = KeyboardMapping(keyCode: 0x31, modifiers: CGEventFlags.maskControl.rawValue)

@@ -9,6 +9,8 @@ final class SampleRing {
     private var readIndex = 0
     private var writeIndex = 0
     private var count = 0
+    private var renderCalls = 0
+    private var renderedSamples = 0
 
     func append(_ samples: [Int16], sampleRate: Int) {
         lock.lock()
@@ -31,6 +33,8 @@ final class SampleRing {
     func read(into pointer: UnsafeMutablePointer<Float>, count requested: Int) {
         lock.lock()
         defer { lock.unlock() }
+        renderCalls += 1
+        renderedSamples += min(count, requested)
         for index in 0..<requested {
             if count > 0 {
                 pointer[index] = storage[readIndex]
@@ -47,7 +51,15 @@ final class SampleRing {
         readIndex = 0
         writeIndex = 0
         count = 0
+        renderCalls = 0
+        renderedSamples = 0
         lock.unlock()
+    }
+
+    var diagnosticSummary: String {
+        lock.lock()
+        defer { lock.unlock() }
+        return "queued=\(count) renderCalls=\(renderCalls) renderedSamples=\(renderedSamples)"
     }
 }
 
@@ -98,6 +110,17 @@ final class AudioOutput {
     }
 
     func clear() { ring.clear() }
+
+    var diagnosticSummary: String {
+        var outputDevice: AudioDeviceID = 0
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        if let unit = engine.outputNode.audioUnit {
+            _ = AudioUnitGetProperty(unit, kAudioOutputUnitProperty_CurrentDevice,
+                                    kAudioUnitScope_Global, 0, &outputDevice, &size)
+        }
+        let format = engine.outputNode.inputFormat(forBus: 0)
+        return "engineRunning=\(engine.isRunning) outputDevice=\(outputDevice) rate=\(format.sampleRate) channels=\(format.channelCount) \(ring.diagnosticSummary)"
+    }
 
     private func findOutputDevice(containing needle: String) throws -> (id: AudioDeviceID, name: String) {
         var address = AudioObjectPropertyAddress(

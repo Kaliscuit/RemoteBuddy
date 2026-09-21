@@ -244,7 +244,10 @@ final class MappingSettingsWindow: NSWindowController, NSWindowDelegate, NSTable
         intro.textColor = .secondaryLabelColor
         content.addSubview(intro)
         let scroll = NSScrollView(frame: NSRect(x: 24, y: 109, width: 210, height: 453))
-        scroll.hasVerticalScroller = true
+        // Keep scrolling available without showing bars, including on Macs
+        // whose system preference is "Always show scroll bars".
+        scroll.hasVerticalScroller = false
+        scroll.hasHorizontalScroller = false
         scroll.borderType = .bezelBorder
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("key"))
         column.width = 198
@@ -340,7 +343,7 @@ final class MappingSettingsWindow: NSWindowController, NSWindowDelegate, NSTable
         } else if (0..<RemoteKeyDefinition.all.count).contains(table.selectedRow) {
             let definition = RemoteKeyDefinition.all[table.selectedRow]
             editorTitle.stringValue = definition.title
-            editorNote.stringValue = L10n.tr("选择这个按键执行的动作。普通按键不区分短按和长按。")
+            editorNote.stringValue = L10n.tr("按住会重复执行当前动作，约2秒后自动停止；松开再按可继续。")
             actionEditor.setValue(draft.action(for: definition.id))
         }
     }

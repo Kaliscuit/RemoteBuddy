@@ -101,7 +101,7 @@
 "语音键" = "Voice";
 "收音快捷键" = "Shortcuts";
 "保留当前麦克风逻辑：短按开始 / 结束收音，按住说话。这里只修改触发的快捷键。" = "Press briefly to toggle the microphone, or hold to talk. These settings change only the shortcuts.";
-"选择这个按键执行的动作。普通按键不区分短按和长按。" = "Choose an action for this button. Short and long presses use the same mapping.";
+"按住会重复执行当前动作，约2秒后自动停止；松开再按可继续。" = "Hold to repeat this action. It stops after about 2 seconds; release and press again to continue.";
 "已识别：%@ · 按下" = "Detected: %@ · Pressed";
 "已识别：%@ · 已松开（%.2f 秒）" = "Detected: %@ · Released (%.2f s)";
 "已恢复初始映射，点击保存后应用。" = "Defaults restored. Click Save & Apply to use them.";

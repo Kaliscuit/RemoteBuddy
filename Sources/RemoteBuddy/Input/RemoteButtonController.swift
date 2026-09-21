@@ -195,11 +195,7 @@ final class RemoteButtonController {
         reportedButtons = pressed
         blockedUntilRelease.formIntersection(pressed)
         guard !configuring else { return }
-        let repeatable = Set<UInt8>([3, 4, 5, 6, 12, 13].filter {
-            MappingStore.shared.configuration.action(for: $0).supportsRepeat
-        })
-        apply(state.update(pressed.subtracting(blockedUntilRelease), now: ProcessInfo.processInfo.systemUptime,
-                           repeatableButtons: repeatable))
+        apply(state.update(pressed.subtracting(blockedUntilRelease), now: ProcessInfo.processInfo.systemUptime))
     }
 
     private func apply(_ changes: [RemoteButtonChange]) {

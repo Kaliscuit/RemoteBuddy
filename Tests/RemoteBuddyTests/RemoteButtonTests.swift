@@ -2,6 +2,42 @@ import XCTest
 @testable import RemoteBuddy
 
 final class RemoteButtonTests: XCTestCase {
+    func testEveryOrdinaryButtonRepeatsUntilItsRelease() {
+        for definition in RemoteKeyDefinition.all {
+            var state = RemoteButtonState()
+            let button = definition.id
+            XCTAssertEqual(state.update([button], now: 0), [RemoteButtonChange(button: button, isDown: true)])
+            XCTAssertEqual(state.tick(now: 0.33), [])
+            XCTAssertEqual(state.tick(now: 0.35), [RemoteButtonChange(button: button, isDown: true, isRepeat: true)])
+            XCTAssertEqual(state.tick(now: 0.43), [RemoteButtonChange(button: button, isDown: true, isRepeat: true)])
+            XCTAssertEqual(state.update([], now: 0.45), [RemoteButtonChange(button: button, isDown: false)])
+            XCTAssertEqual(state.tick(now: 0.8), [])
+        }
+    }
+
+    func testReleasingBackDoesNotStopAnotherHeldButton() {
+        var state = RemoteButtonState()
+        _ = state.update([11], now: 0)
+        _ = state.update([11, 14], now: 0.2)
+        XCTAssertEqual(state.tick(now: 0.35), [RemoteButtonChange(button: 11, isDown: true, isRepeat: true)])
+        XCTAssertEqual(state.tick(now: 0.55), [RemoteButtonChange(button: 11, isDown: true, isRepeat: true),
+                                             RemoteButtonChange(button: 14, isDown: true, isRepeat: true)])
+        XCTAssertEqual(state.update([14], now: 0.56), [RemoteButtonChange(button: 11, isDown: false)])
+        XCTAssertEqual(state.tick(now: 0.65), [RemoteButtonChange(button: 14, isDown: true, isRepeat: true)])
+    }
+
+    func testBackWatchdogDoesNotReleaseAnotherButtonEarly() {
+        var state = RemoteButtonState()
+        _ = state.update([11], now: 0)
+        _ = state.update([11, 14], now: 1.5)
+        XCTAssertEqual(state.tick(now: 2), [RemoteButtonChange(button: 11, isDown: false),
+                                          RemoteButtonChange(button: 14, isDown: true, isRepeat: true)])
+        XCTAssertEqual(state.update([11, 14], now: 2.05), [])
+        XCTAssertEqual(state.tick(now: 2.1), [RemoteButtonChange(button: 14, isDown: true, isRepeat: true)])
+        XCTAssertEqual(state.tick(now: 3.5), [RemoteButtonChange(button: 14, isDown: false)])
+        XCTAssertEqual(state.tick(now: 4), [])
+    }
+
     func testNativeReportAndRawReadPayloadHaveExplicitFraming() {
         XCTAssertEqual(RemoteButtonReport.decode([1, 5, 7], includesReportID: true), [5, 7])
         XCTAssertEqual(RemoteButtonReport.decode([1, 0], includesReportID: false), [1])
