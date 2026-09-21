@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>ConsentText</key>
+	<dict>
+		<key>default</key>
+		<string>This profile enables system Bluetooth HCI capture. macOS may log raw traffic from other Bluetooth devices. RemoteBuddy forwards only the configured remote’s buttons to this user and does not send data over the network. This profile does not request private-data logging or firmware dumps. Remove it when uninstalling RemoteBuddy.</string>
+		<key>zh-Hans</key>
+		<string>此配置开启系统级蓝牙原始捕获，可能产生其他蓝牙设备的原始日志。RemoteBuddy 辅助服务只向本用户转发指定 Chromecast Remote 的按键；不向外发送数据。配置不请求启用 PrivateDataLogging 或固件转储。卸载 RemoteBuddy 时应一并移除此配置，也可随时在系统设置中手动移除。</string>
+	</dict>
+	<key>PayloadContent</key>
+	<array>
+		<dict>
+			<key>HCITraces</key>
+			<dict>
+				<key>StackDebugEnabled</key>
+				<true/>
+			</dict>
+			<key>PayloadIdentifier</key>
+			<string>local.codex.RemoteMic.hci.capture</string>
+			<key>PayloadType</key>
+			<string>com.apple.MobileBluetooth.debug</string>
+			<key>PayloadUUID</key>
+			<string>41E68F3F-F0EC-410C-A3B3-127C8535E2CB</string>
+			<key>PayloadVersion</key>
+			<integer>1</integer>
+		</dict>
+	</array>
+	<key>PayloadDescription</key>
+	<string>Enable Bluetooth HCI capture for RemoteBuddy button compatibility. Requests only HCITraces.StackDebugEnabled.</string>
+	<key>PayloadDisplayName</key>
+	<string>RemoteBuddy Bluetooth Compatibility</string>
+	<key>PayloadIdentifier</key>
+	<string>local.codex.RemoteMic.hci</string>
+	<key>PayloadOrganization</key>
+	<string>RemoteBuddy</string>
+	<key>PayloadScope</key>
+	<string>System</string>
+	<key>PayloadType</key>
+	<string>Configuration</string>
+	<key>PayloadUUID</key>
+	<string>1ED048E6-4996-452F-9A93-7A4874463B73</string>
+	<key>PayloadVersion</key>
+	<integer>1</integer>
+</dict>
+</plist>
