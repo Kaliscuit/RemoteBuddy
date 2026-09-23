@@ -193,6 +193,100 @@ final class VoiceRecoveryTests: XCTestCase {
         ble.stop()
     }
 
+    func testRemoteStopDoesNotEchoCloseAndNextHoldStillWorks() {
+        let audio = AudioOutput()
+        let keyboard = Keyboard()
+        var commands: [Data] = []
+        let ble = controller(audio, keyboard) { commands.append($0) }
+        ble.handle(.audioStart(reason: 3, codec: .adpcm16k, streamID: 1))
+        ble.handle(.audioStop(reason: 0))
+        XCTAssertTrue(commands.isEmpty)
+        for _ in 0..<10 { ble.handle(.audioStop(reason: 0)) }
+        XCTAssertTrue(commands.isEmpty)
+        XCTAssertEqual(keyboard.taps, 0)
+
+        ble.handle(.audioStart(reason: 3, codec: .adpcm16k, streamID: 2))
+        let held = expectation(description: "next hold survives stop acknowledgements")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { held.fulfill() }
+        wait(for: [held], timeout: 1.5)
+        XCTAssertEqual(keyboard.holds, [true])
+        ble.handle(.audioStop(reason: 0))
+        XCTAssertEqual(keyboard.holds, [true, false])
+        XCTAssertTrue(commands.isEmpty)
+        ble.stop()
+    }
+
+    func testHTTSearchCompanionPreservesHoldUntilRelease() {
+        let audio = AudioOutput()
+        let keyboard = Keyboard()
+        var commands: [Data] = []
+        let ble = controller(audio, keyboard) { commands.append($0) }
+        ble.handle(.audioStart(reason: 3, codec: .adpcm16k, streamID: 4))
+        ble.handle(.startSearch)
+        XCTAssertEqual(keyboard.taps, 0)
+        let held = expectation(description: "HTT still becomes a hold")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { held.fulfill() }
+        wait(for: [held], timeout: 1.5)
+        XCTAssertEqual(keyboard.holds, [true])
+        XCTAssertTrue(commands.isEmpty)
+        ble.handle(.audioStop(reason: 2))
+        ble.checkVoiceHealth()
+        XCTAssertEqual(keyboard.holds, [true, false])
+        XCTAssertEqual(keyboard.taps, 0)
+        ble.stop()
+    }
+
+    func testHTTSearchCompanionReopensTapAndRecordsPastTimeout() {
+        let audio = AudioOutput()
+        let keyboard = Keyboard()
+        var commands: [Data] = []
+        let ble = controller(audio, keyboard) { commands.append($0) }
+        ble.handle(.audioStart(reason: 3, codec: .adpcm16k, streamID: 5))
+        ble.handle(.startSearch)
+        ble.handle(.audioStop(reason: 2))
+        XCTAssertEqual(keyboard.taps, 1)
+        let reopened = expectation(description: "release requests persistent microphone")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { reopened.fulfill() }
+        wait(for: [reopened], timeout: 1)
+        XCTAssertEqual(commands, [Data([0x0c, 0x00])])
+        ble.handle(.audioStart(reason: 0, codec: .adpcm16k, streamID: 0))
+        let now = ProcessInfo.processInfo.systemUptime
+        for second in 0..<12 {
+            ble.receiveAudio(Data([0x00]), at: now + Double(second))
+            ble.checkVoiceHealth(now: now + Double(second) + 0.5)
+        }
+        XCTAssertEqual(keyboard.taps, 1)
+        // The companion event on the next press must not start a new toggle.
+        ble.handle(.audioStart(reason: 3, codec: .adpcm16k, streamID: 6))
+        ble.handle(.startSearch)
+        ble.handle(.audioStop(reason: 2))
+        ble.checkVoiceHealth(now: ProcessInfo.processInfo.systemUptime + 2.1)
+        XCTAssertEqual(keyboard.taps, 2)
+        XCTAssertEqual(keyboard.holds, [])
+        ble.stop()
+        XCTAssertEqual(keyboard.taps, 2)
+    }
+
+    func testDuplicateStopPreservesBufferedTailAndDoesNotSendClose() {
+        let audio = AudioOutput()
+        let keyboard = Keyboard()
+        var commands: [Data] = []
+        let ble = controller(audio, keyboard) { commands.append($0) }
+        ble.handle(.audioStart(reason: 3, codec: .adpcm16k, streamID: 1))
+        audio.feed([123], sampleRate: 16000)
+        ble.handle(.audioStop(reason: 2))
+        ble.handle(.audioStart(reason: 0, codec: .adpcm16k, streamID: 0))
+        ble.handle(.startSearch)
+        let closeCount = commands.count
+        for _ in 0..<10 { ble.handle(.audioStop(reason: 0)) }
+        XCTAssertEqual(commands.count, closeCount)
+        XCTAssertEqual(audio.queuedSamples, 1)
+        XCTAssertEqual(keyboard.taps, 1)
+        ble.checkVoiceHealth(now: ProcessInfo.processInfo.systemUptime + 2.1)
+        XCTAssertEqual(keyboard.taps, 2)
+        ble.stop()
+    }
+
     func testTransportWatchdogUsesArrivalNotVolumeAndInvalidatesTasks() {
         var watchdog = VoiceSessionWatchdog()
         let generation = watchdog.generation
