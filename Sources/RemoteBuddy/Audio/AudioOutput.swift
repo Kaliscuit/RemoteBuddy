@@ -229,6 +229,7 @@ final class AudioOutput {
 
     private func scheduleRecovery() {
         guard enabled else { return }
+        logger.notice("Audio configuration changed running=\(self.engine?.isRunning == true) currentDevice=\(self.currentDevice()) configuredDevice=\(self.configuredDevice)")
         recoveryWork?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.recover() }
         recoveryWork = work

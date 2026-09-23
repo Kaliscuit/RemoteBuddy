@@ -192,6 +192,7 @@ final class BLEController: NSObject, CBCentralManagerDelegate, CBPeripheralDeleg
         if characteristic.uuid == audioUUID {
             receiveAudio(data)
         } else if characteristic.uuid == control || characteristic.uuid == command {
+            audioDiagnostics.notice("ATVV control=\(data.map { String(format: "%02X", $0) }.joined(separator: " "), privacy: .public)")
             handle(session.parseControl(data))
         }
     }
@@ -227,7 +228,10 @@ final class BLEController: NSObject, CBCentralManagerDelegate, CBPeripheralDeleg
             }
             onStatus?(L10n.tr("已就绪 · 按住语音键说话"))
         case .startSearch:
-            guard !shortcutsSuspended else { return }
+            // Firmware 26.2 sends START_SEARCH immediately after the HTT
+            // AUDIO_START for the same physical press. Keep that gesture until
+            // AUDIO_STOP/release so it can become a hold or reopen on a tap.
+            guard !shortcutsSuspended, !voiceGesture.isPressed else { return }
             handleTap()
         case .audioSync(let codec, let sequence, let predictor, let stepIndex):
             audioDiagnostics.notice("Voice sync codec=\(codec.rawValue) sourceRate=\(codec.sampleRate) sequence=\(sequence)")
@@ -272,6 +276,9 @@ final class BLEController: NSObject, CBCentralManagerDelegate, CBPeripheralDeleg
             onStreaming?(true)
             onStatus?(shortcutsSuspended ? L10n.tr("按键设置：正在识别语音键") : L10n.tr("正在传输遥控器麦克风"))
         case .audioStop(let reason):
+            // MIC_CLOSE can produce another AUDIO_STOP even when already idle.
+            // Ignore duplicate acknowledgements instead of starting a close loop.
+            guard streaming || voiceGesture.isPressed || voiceGesture.toggleActive else { return }
             let frames = streamFrameCount
             let peak = streamPeak
             audioDiagnostics.notice("Voice stop reason=\(reason) packets=\(self.receivedAudioPackets) decodedFrames=\(frames) peak=\(peak) suspended=\(self.shortcutsSuspended) \(self.audio.diagnosticSummary, privacy: .public)")
@@ -433,7 +440,9 @@ final class BLEController: NSObject, CBCentralManagerDelegate, CBPeripheralDeleg
             cancelPendingWork()
             _ = voiceGesture.reset()
         } else {
-            resetVoice()
+            // The remote has already stopped. Sending MIC_CLOSE here makes its
+            // acknowledgement trigger another reset/close indefinitely.
+            resetVoice(closeMicrophone: false)
         }
     }
 
