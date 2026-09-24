@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Root capture service. No commands from clients; only one allowed user's socket.
+"""Root capture service restricted to one allowed user's socket.
 
 The Apple-signed PacketLogger writes binary records into a private FIFO. Raw
 traffic stays in memory. Only the configured remote's HID notifications leave
@@ -10,6 +10,7 @@ import ctypes
 import json
 import os
 import pathlib
+import re
 import selectors
 import signal
 import socket
@@ -18,6 +19,61 @@ import struct
 import subprocess
 import tempfile
 import time
+import uuid
+
+
+def remote_selection(request):
+    """Only device selection fields may cross the user/root boundary."""
+    allowed = {"type", "address", "attribute", "report_format", "peripheral_id", "auto_detect"}
+    if not isinstance(request, dict) or set(request) - allowed or request.get("type") != "configure":
+        raise ValueError("Invalid configuration request")
+    address = request.get("address")
+    attribute = request.get("attribute")
+    report_format = request.get("report_format")
+    automatic = request.get("auto_detect", False)
+    if not isinstance(address, str) or not re.fullmatch(r"[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}", address):
+        raise ValueError("Invalid remote address")
+    if type(attribute) is not int or not 1 <= attribute <= 0xffff:
+        raise ValueError("Invalid ATT handle")
+    if report_format not in ("indexed", "consumer16") or type(automatic) is not bool:
+        raise ValueError("Invalid report format or detection mode")
+    result = dict(address=address.upper(), attribute=attribute, report_format=report_format, auto_detect=automatic)
+    identifier = request.get("peripheral_id")
+    if identifier is not None:
+        if not isinstance(identifier, str) or not re.fullmatch(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", identifier):
+            raise ValueError("Invalid peripheral identifier")
+        result["peripheral_id"] = str(uuid.UUID(identifier)).upper()
+    return result
+
+
+def read_configuration(path):
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+        raise ValueError("Helper configuration must be a root-owned regular file, not writable by other users")
+    return json.loads(path.read_text())
+
+
+def save_selection(path, current, selection):
+    """Replace only the fixed service config; never accept a path or command."""
+    on_disk = read_configuration(path)
+    if on_disk != current:
+        raise ValueError("Configuration changed; reconnect before saving")
+    updated = {**current, **selection}
+    if "peripheral_id" not in selection:
+        updated.pop("peripheral_id", None)
+    descriptor, temporary = tempfile.mkstemp(prefix=".remote-config-", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w") as output:
+            os.fchmod(output.fileno(), 0o644)
+            json.dump(updated, output, indent=2)
+            output.write("\n")
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+    return updated
 
 
 class Frames:
@@ -175,7 +231,7 @@ def peer_uid(connection):
     return uid.value
 
 
-def session(connection, config):
+def session(connection, config, config_path):
     decoder = RemoteReports(config["address"], config["attribute"], config.get("report_format", "indexed"))
     capture = Capture(config["packetlogger"])
     selector = selectors.DefaultSelector()
@@ -185,18 +241,37 @@ def session(connection, config):
     last_heartbeat = 0
     started = time.monotonic()
     reports_seen = 0
+    request_buffer = bytearray()
 
     def send(kind, **fields):
         message = {"type": kind, "address": config["address"], "received_at": time.time(), **fields}
         connection.sendall(json.dumps(message, separators=(",", ":")).encode() + b"\n")
 
     try:
-        send("connected")
+        send("connected", protocol_version=2)
         while True:
             for key, _ in selector.select(timeout=0.5):
                 if key.data == "client":
-                    # EOF closes capture; any client command is rejected.
-                    connection.recv(256)
+                    chunk = connection.recv(4097)
+                    if not chunk:
+                        return
+                    request_buffer.extend(chunk)
+                    if len(request_buffer) > 4096:
+                        send("configuration_error")
+                        return
+                    if b"\n" not in request_buffer:
+                        continue
+                    try:
+                        # One bounded JSON message; extra messages are rejected.
+                        request = json.loads(request_buffer)
+                        selection = remote_selection(request)
+                        save_selection(config_path, config, selection)
+                    except (OSError, ValueError, TypeError):
+                        send("configuration_error")
+                        return
+                    send("configured", configuration=selection)
+                    # Restart capture on the next connection, so the new
+                    # decoder receives PacketLogger's connection metadata.
                     return
                 for timestamp, kind, body in capture.read():
                     payload = decoder.accept(kind, body)
@@ -253,10 +328,7 @@ def main():
         self_test(args.self_test_stream, args.address, args.attribute)
         return
     config_path = pathlib.Path(args.config)
-    info = config_path.stat()
-    if info.st_uid != 0 or info.st_mode & 0o022:
-        raise SystemExit("Helper configuration must be root-owned and not writable by other users")
-    config = json.loads(config_path.read_text())
+    config = read_configuration(config_path)
     path = config["socket"]
     if os.path.lexists(path):
         if not stat.S_ISSOCK(os.lstat(path).st_mode):
@@ -274,7 +346,12 @@ def main():
             connection, _ = server.accept()
             try:
                 if peer_uid(connection) == config["uid"]:
-                    session(connection, config)
+                    latest = read_configuration(config_path)
+                    # A selection update must not change service ownership,
+                    # socket location or the executable used for capture.
+                    if any(latest[key] != config[key] for key in ("uid", "gid", "socket", "packetlogger")):
+                        raise ValueError("Service settings changed; restart the helper")
+                    session(connection, latest, config_path)
             except (OSError, RuntimeError, ValueError) as error:
                 print(f"Session ended: {error}", flush=True)
                 time.sleep(1)

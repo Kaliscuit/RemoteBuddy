@@ -75,6 +75,16 @@ PacketLogger 提供按键兼容通道需要的实时 HCI 数据，不是可随�
 
 ### 更换遥控器
 
+更新应用和辅助服务后，直接使用菜单栏 **遥控器设置…**（按键设置窗口中也有入口）：
+
+1. 在系统蓝牙设置中配对并连接新遥控器。
+2. 点击 **刷新设备**，选择列表中的遥控器；列表会同时显示地址，区分同名设备。
+3. 保持 **自动识别兼容参数** 开启，确认显示的厂商、型号、固件和匹配结果。
+4. 点击 **保存并连接**，关闭设置窗口后测试按键和语音。无需重新安装或手动重启，个人映射会保留。
+
+列表读取已连接的 Chromecast 遥控器，不替代系统蓝牙配对。自动识别目前支持下列已验证的组合，
+不是根据蓝牙名称猜测协议，也不扫描未知句柄。固件更新后请刷新并重新识别。
+
 设备名称相同不代表固件和按键格式相同。原版 ABBEY / 22.2 使用 `0x46` 和
 `indexed`；已适配的 `zhuhai_jieli` / `hid_mouse` / 0.0.1 使用 `0x2b` 和
 `consumer16`。后者会转换为原有的按键编号，保留个人映射。
@@ -85,11 +95,13 @@ PacketLogger 提供按键兼容通道需要的实时 HCI 数据，不是可随�
 ./Install.command "$HOME/Applications/PacketLogger.app" 'AA:BB:CC:DD:EE:FF' 0x2b consumer16
 ```
 
-已安装用户的设备参数位于 `/Library/Application Support/RemoteMic/hci-config.json`：
-更新 `address`，并按实际固件设置 `attribute`（JSON 中 `0x2b` 写作 `43`）和
-`report_format`。旧配置没有 `report_format` 时默认使用 `indexed`。修改前备份配置，
-修改后重启系统辅助服务和 RemoteBuddy，并重新连接遥控器。配置需保持 root 所有且仅 root 可写。
-只更新地址不能解决固件格式变化；其他固件需要先核对实际报告。
+也可在设置中手动输入地址，支持冒号或连字符分隔。同型号更换地址时可沿用已确认的参数；
+未知型号需关闭自动识别，手动填写已核对的格式和句柄。应用不会为未知设备自动套用旧协议。
+如果提示辅助服务版本过旧，请运行新版安装器更新一次辅助服务，仅替换 `.app` 不够。
+
+配置仍保存于 `/Library/Application Support/RemoteMic/hci-config.json`，由辅助服务原子更新，
+保持 root 所有和 0644 权限。设备字段包括 `address`、`attribute`、`report_format`、
+`peripheral_id`（语音设备标识）和 `auto_detect`。旧配置无需迁移，缺失格式时默认 `indexed`。
 
 语音松键延迟补偿会自动读取厂商、型号和固件，三者全部匹配上述已验证的 Jieli 设备才启用；
 其他设备保留原来的手势计时逻辑。详见[协议兼容说明](PROTOCOL.zh-CN.md)。

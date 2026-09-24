@@ -11,6 +11,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let hciSource = HCIReportSource()
     private let hciService = HCISocketSource()
     private var mappingWindow: MappingSettingsWindow?
+    private var remoteWindow: RemoteSettingsWindow?
+    private var mappingSettingsVisible = false
+    private var remoteSettingsVisible = false
+    private var renderingPreview = false
     private var statusItem: NSStatusItem!
     private lazy var statusIcon: NSImage? = {
         let image = (NSImage(named: "StatusBarTemplate")?.copy() as? NSImage)
@@ -27,8 +31,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     )
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if let index = CommandLine.arguments.firstIndex(of: "--render-remote-settings"),
+           CommandLine.arguments.indices.contains(index + 1) {
+            renderingPreview = true
+            let sample = DiscoveredRemote(name: "Chromecast Remote", address: "AA:BB:CC:DD:EE:FF",
+                peripheralID: UUID(uuidString: "11111111-2222-3333-4444-555555555555"),
+                manufacturer: "zhuhai_jieli", model: "hid_mouse", firmware: "0.0.1", vendorID: 0x18d1, productID: 0x9450)
+            let preview = RemoteSettingsWindow(discover: { [sample] }, load: {
+                if CommandLine.arguments.contains("--preview-remote-manual") {
+                    return try? RemoteConfiguration(address: sample.address, attribute: 0x2b,
+                        reportFormat: .consumer16, peripheralID: sample.peripheralID)
+                }
+                return try? sample.automaticConfiguration()
+            })
+            remoteWindow = preview
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                do { try preview.renderPreview(to: URL(fileURLWithPath: CommandLine.arguments[index + 1])) }
+                catch { print(error.localizedDescription) }
+                NSApplication.shared.terminate(nil)
+            }
+            return
+        }
         if let index = CommandLine.arguments.firstIndex(of: "--render-settings"),
            CommandLine.arguments.indices.contains(index + 1) {
+            renderingPreview = true
             let preview = MappingSettingsWindow()
             mappingWindow = preview
             preview.showWindow(nil)
@@ -55,6 +81,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let mapping = NSMenuItem(title: L10n.tr("按键设置…"), action: #selector(openMappingSettings), keyEquivalent: ",")
         mapping.target = self
         menu.addItem(mapping)
+        let remote = NSMenuItem(title: L10n.tr("遥控器设置…"), action: #selector(openRemoteSettings), keyEquivalent: "")
+        remote.target = self
+        menu.addItem(remote)
         menu.addItem(.separator())
         let sound = NSMenuItem(title: L10n.tr("打开声音设置…"), action: #selector(openSoundSettings), keyEquivalent: "")
         sound.target = self
@@ -74,21 +103,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             try audio.start()
             setStatus(L10n.format("音频：%@ · 正在连接遥控器…", audio.deviceName))
-            let controller = BLEController(audio: audio)
-            controller.onStatus = { [weak self] in self?.setStatus($0) }
-            controller.onStreaming = { [weak self] active in
-                self?.updateStatusIcon(streaming: active)
-            }
-            bluetooth = controller
+            startVoiceController()
             MappingStore.shared.willChange = { [weak self] in
                 self?.buttons.mappingWillChange()
                 self?.bluetooth?.prepareForMappingChange()
             }
             buttons.onButtonActivity = { [weak self] button, pressed in
                 self?.mappingWindow?.noteActivity(button: button, pressed: pressed)
-            }
-            controller.onVoiceButtonActivity = { [weak self] pressed in
-                self?.mappingWindow?.noteActivity(button: nil, pressed: pressed)
             }
             buttons.onStatus = { [weak self] in self?.setButtonStatus($0) }
             if CommandLine.arguments.contains("--diagnose-corehid"), #available(macOS 15, *) {
@@ -151,6 +172,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if renderingPreview { return .terminateNow }
         bluetooth?.stop()
         // Fn+Space consists of events scheduled over 70 ms. Let its release
         // finish before exiting so WeChat input is not left recording/holding Fn.
@@ -185,13 +207,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if mappingWindow == nil {
             let window = MappingSettingsWindow()
             window.onVisibilityChange = { [weak self] visible in
-                self?.buttons.setConfiguring(visible)
-                self?.bluetooth?.setConfiguring(visible)
+                self?.mappingSettingsVisible = visible
+                self?.updateSettingsActivity()
             }
+            window.onRemoteSettings = { [weak self] in self?.openRemoteSettings() }
             mappingWindow = window
         }
         mappingWindow?.present()
     }
 
+    private func startVoiceController() {
+        let controller = BLEController(audio: audio)
+        controller.onStatus = { [weak self] in self?.setStatus($0) }
+        controller.onStreaming = { [weak self] in self?.updateStatusIcon(streaming: $0) }
+        controller.onVoiceButtonActivity = { [weak self] in self?.mappingWindow?.noteActivity(button: nil, pressed: $0) }
+        controller.shortcutsSuspended = mappingSettingsVisible || remoteSettingsVisible
+        bluetooth = controller
+    }
+
+    private func updateSettingsActivity() {
+        let visible = mappingSettingsVisible || remoteSettingsVisible
+        buttons.setConfiguring(visible)
+        bluetooth?.setConfiguring(visible)
+    }
+
+    @objc private func openRemoteSettings() {
+        if remoteWindow == nil {
+            let window = RemoteSettingsWindow()
+            window.onVisibilityChange = { [weak self] visible in
+                self?.remoteSettingsVisible = visible
+                self?.updateSettingsActivity()
+            }
+            window.onApply = { [weak self] value, completion in
+                self?.applyRemoteConfiguration(value, completion: completion)
+            }
+            remoteWindow = window
+        }
+        remoteWindow?.present()
+    }
+
+    private func applyRemoteConfiguration(_ value: RemoteConfiguration,
+                                         completion: @escaping (Result<RemoteConfiguration, Error>) -> Void) {
+        hciService.configure(value) { [weak self] response in
+            guard let self else { return }
+            // Read back the root-owned file. This also handles a lost socket
+            // acknowledgement after the atomic write succeeded.
+            guard RemoteIdentity.configuration == value else {
+                if case .failure(let error) = response { completion(.failure(error)) }
+                else { completion(.failure(RemoteSettingsError.saveFailed)) }
+                return
+            }
+            self.bluetooth?.stop()
+            self.bluetooth = nil
+            self.hciService.stop()
+            self.buttons.start()
+            self.buttons.setConfiguring(self.mappingSettingsVisible || self.remoteSettingsVisible)
+            self.startVoiceController()
+            self.hciService.start()
+            completion(.success(value))
+        }
+    }
 
 }

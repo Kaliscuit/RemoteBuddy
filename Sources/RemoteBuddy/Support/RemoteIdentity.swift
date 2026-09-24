@@ -10,14 +10,14 @@ enum RemoteIdentity {
         return value.uppercased()
     }
 
-    static var configuredAddress: String? {
+    static var configuration: RemoteConfiguration? {
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: configurationURL.path),
               (attributes[.ownerAccountID] as? NSNumber)?.uint32Value == 0,
               let permissions = attributes[.posixPermissions] as? NSNumber,
               permissions.intValue & 0o022 == 0,
-              let data = try? Data(contentsOf: configurationURL),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let address = object["address"] as? String else { return nil }
-        return canonicalAddress(address)
+              let data = try? Data(contentsOf: configurationURL) else { return nil }
+        return try? JSONDecoder().decode(RemoteConfiguration.self, from: data)
     }
+
+    static var configuredAddress: String? { configuration?.address }
 }

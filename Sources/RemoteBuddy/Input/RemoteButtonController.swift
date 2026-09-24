@@ -19,10 +19,12 @@ private func remoteButtonRemoved(context: UnsafeMutableRawPointer?, result: IORe
 private func remoteButtonReportReceived(context: UnsafeMutableRawPointer?, result: IOReturn,
     sender: UnsafeMutableRawPointer?, type: IOHIDReportType, reportID: UInt32,
     report: UnsafeMutablePointer<UInt8>, reportLength: CFIndex, timeStamp: UInt64) {
-    guard let context, result == kIOReturnSuccess, type == kIOHIDReportTypeInput,
+    guard let context, let sender, result == kIOReturnSuccess, type == kIOHIDReportTypeInput,
           reportID == 1, reportLength > 0 else { return }
-    Unmanaged<RemoteButtonController>.fromOpaque(context).takeUnretainedValue()
-        .handleNativeReport(Array(UnsafeBufferPointer(start: report, count: reportLength)), timestamp: timeStamp)
+    let controller = Unmanaged<RemoteButtonController>.fromOpaque(context).takeUnretainedValue()
+    let device = Unmanaged<IOHIDDevice>.fromOpaque(sender).takeUnretainedValue()
+    guard controller.acceptsNativeDevice(device) else { return }
+    controller.handleNativeReport(Array(UnsafeBufferPointer(start: report, count: reportLength)), timestamp: timeStamp)
 }
 
 final class RemoteButtonController {
@@ -44,6 +46,7 @@ final class RemoteButtonController {
     private var reading = false
     private var hciBridge = false
     private var connectedDevice: IOHIDDevice?
+    private var remoteConfiguration: RemoteConfiguration?
     private(set) var experimentalReading = false
     private var timebase: mach_timebase_info_data_t = {
         var info = mach_timebase_info_data_t()
@@ -53,6 +56,7 @@ final class RemoteButtonController {
 
     func start() {
         stop()
+        remoteConfiguration = RemoteIdentity.configuration
         // The HCI bridge also needs repeat/release timers and error reporting,
         // even when macOS refuses access to the native HID device.
         actionSender.onError = { [weak self] in self?.onStatus?($0) }
@@ -100,6 +104,7 @@ final class RemoteButtonController {
     }
 
     fileprivate func deviceMatched(_ device: IOHIDDevice) {
+        guard acceptsNativeDevice(device) else { return }
         logger.notice("Native HID report listener ready; single report source; hold watchdog 2s")
         connectedDevice = device
         apply(state.reset())
@@ -123,6 +128,12 @@ final class RemoteButtonController {
             self.onStatus?(L10n.tr("按键：读取失败，请重新连接遥控器"))
         }
         setExperimentalReading(experimentalReading)
+    }
+
+    fileprivate func acceptsNativeDevice(_ device: IOHIDDevice) -> Bool {
+        guard let configuration = remoteConfiguration, configuration.reportFormat == .indexed,
+              let raw = IOHIDDeviceGetProperty(device, "DeviceAddress" as CFString) as? String else { return false }
+        return RemoteConfiguration.enteredAddress(raw) == configuration.address
     }
 
     func setExperimentalReading(_ enabled: Bool) {

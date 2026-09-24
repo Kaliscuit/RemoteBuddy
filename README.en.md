@@ -104,6 +104,12 @@ Disabled actions remain no-ops. Repeats target a 65 ms interval with independent
 per-button timers and stop on release. A two-second forced release remains;
 release and press again to continue. Voice tap/hold behavior is unchanged.
 
+Use **Remote Settings…** to refresh and select a connected remote or enter its
+Bluetooth address. Verified ABBEY / 22.2 and Jieli `hid_mouse` / 0.0.1 devices
+automatically select their report format and handle. Saving switches buttons and
+voice together and preserves mappings. Unknown models have a manual option;
+using this feature requires a helper update. See [Replacing a remote](docs/INSTALL.en.md#replacing-a-remote).
+
 ## Build from source
 
 ```sh

@@ -36,8 +36,21 @@ Other manufacturers, models, firmware versions, or incomplete device information
 keep the standard elapsed-time gesture detection. Matching ignores case and
 surrounding string padding but does not use prefixes or the Bluetooth display
 name. Identity is cleared when connecting to a device. This automatic voice
-profile does not change the helper's explicitly configured HID handle or format;
-an unknown device still requires protocol verification before adding support.
+profile handles voice timing independently of the selected button protocol.
+Remote Settings reads connected HID metadata through IOKit, including
+`DeviceAddress`, `PhysicalDeviceUniqueID`, manufacturer, model, firmware, and
+VID/PID. The physical UUID selects the matching CoreBluetooth peripheral, never
+the first device with the same name. Verified VID/PID plus ABBEY / 22.2 selects
+`0x46` / `indexed`; the full Jieli identity plus VID/PID selects `0x2b` /
+`consumer16`. Unknown identities require verified manual settings.
+
+Helper protocol v2 accepts one bounded device-selection JSON message from its
+configured peer UID. It validates a strict field allowlist, address, format,
+handle, optional peripheral UUID, and detection flag. It cannot change UID/GID,
+socket or executable paths. The root-owned config is atomically replaced, then
+the client reads it back and restarts both input paths. Capture restarts with
+fresh connection metadata. Malformed requests and failed writes preserve the
+old file. Older helpers are detected before sending a configuration request.
 
 A remote-initiated voice stop ends the local gesture without sending another
 MIC_CLOSE. Stop acknowledgements reset local state without further commands,
