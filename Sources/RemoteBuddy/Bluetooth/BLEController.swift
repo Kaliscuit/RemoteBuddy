@@ -17,6 +17,9 @@ final class BLEController: NSObject, CBCentralManagerDelegate, CBPeripheralDeleg
     private let audio: AudioOutput
     private var central: CBCentralManager!
     private var peripheral: CBPeripheral?
+    private let remoteConfiguration = RemoteIdentity.configuration
+    private var reconnectWorkItem: DispatchWorkItem?
+    private var stopped = false
     private var commandCharacteristic: CBCharacteristic?
     private var subscribed = Set<CBUUID>()
     private var requestedCapabilities = false
@@ -69,6 +72,7 @@ final class BLEController: NSObject, CBCentralManagerDelegate, CBPeripheralDeleg
     }
 
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        guard !stopped else { return }
         guard central.state == .poweredOn else {
             resetVoice(closeMicrophone: false)
             onStatus?(L10n.tr("蓝牙未就绪"))
@@ -78,22 +82,39 @@ final class BLEController: NSObject, CBCentralManagerDelegate, CBPeripheralDeleg
     }
 
     private func reconnect() {
+        guard !stopped, central.state == .poweredOn else { return }
+        guard let identifier = RemoteDeviceDiscovery.selectedPeripheral(for: remoteConfiguration,
+            devices: RemoteDeviceDiscovery.connectedRemotes()) else {
+            onStatus?(L10n.tr("请在遥控器设置中选择已连接的设备。"))
+            scheduleReconnect()
+            return
+        }
         onStatus?(L10n.tr("正在查找 Chromecast Remote…"))
-        if let found = central.retrieveConnectedPeripherals(withServices: [service])
-            .first(where: { $0.name?.localizedCaseInsensitiveContains("Chromecast Remote") == true }) {
+        if let found = central.retrievePeripherals(withIdentifiers: [identifier]).first {
             connect(found)
         } else {
-            central.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
+            central.scanForPeripherals(withServices: [service], options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
+            scheduleReconnect()
         }
+    }
+
+    private func scheduleReconnect() {
+        reconnectWorkItem?.cancel()
+        guard !stopped else { return }
+        let work = DispatchWorkItem { [weak self] in self?.reconnect() }
+        reconnectWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: work)
     }
 
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
                         advertisementData: [String: Any], rssi RSSI: NSNumber) {
-        guard peripheral.name?.localizedCaseInsensitiveContains("Chromecast Remote") == true else { return }
+        guard !stopped, peripheral.identifier == RemoteDeviceDiscovery.selectedPeripheral(for: remoteConfiguration,
+            devices: RemoteDeviceDiscovery.connectedRemotes()) else { return }
         connect(peripheral)
     }
 
     private func connect(_ device: CBPeripheral) {
+        reconnectWorkItem?.cancel()
         central.stopScan()
         peripheral = device
         device.delegate = self
@@ -102,6 +123,7 @@ final class BLEController: NSObject, CBCentralManagerDelegate, CBPeripheralDeleg
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        guard !stopped, peripheral.identifier == self.peripheral?.identifier else { return }
         onStatus?(L10n.tr("正在初始化语音服务…"))
         commandCharacteristic = nil
         subscribed.removeAll()
@@ -112,8 +134,9 @@ final class BLEController: NSObject, CBCentralManagerDelegate, CBPeripheralDeleg
     }
 
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
+        guard !stopped else { return }
         onStatus?(L10n.tr("连接失败，正在重试…"))
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.reconnect() }
+        scheduleReconnect()
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral,
@@ -126,10 +149,11 @@ final class BLEController: NSObject, CBCentralManagerDelegate, CBPeripheralDeleg
     }
 
     private func handleDisconnection() {
+        guard !stopped else { return }
         resetVoice(closeMicrophone: false)
         commandCharacteristic = nil
         onStatus?(L10n.tr("遥控器已断开，正在重连…"))
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.reconnect() }
+        scheduleReconnect()
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
@@ -293,6 +317,10 @@ final class BLEController: NSObject, CBCentralManagerDelegate, CBPeripheralDeleg
             onStreaming?(true)
             onStatus?(shortcutsSuspended ? L10n.tr("按键设置：正在识别语音键") : L10n.tr("正在传输遥控器麦克风"))
         case .audioStop(let reason):
+            // Closing settings or switching devices can acknowledge an idle
+            // MIC_CLOSE. Do not replace the ready status with an empty-stream
+            // error, or disturb a tail that is already draining.
+            if !streaming, !voiceGesture.isPressed, !voiceGesture.toggleActive { return }
             let frames = streamFrameCount
             let peak = streamPeak
             audioDiagnostics.notice("Voice stop reason=\(reason) packets=\(self.receivedAudioPackets) decodedFrames=\(frames) peak=\(peak) suspended=\(self.shortcutsSuspended) \(self.audio.diagnosticSummary, privacy: .public)")
@@ -496,12 +524,21 @@ final class BLEController: NSObject, CBCentralManagerDelegate, CBPeripheralDeleg
     }
 
     func stop() {
+        stopped = true
+        reconnectWorkItem?.cancel()
+        reconnectWorkItem = nil
         resetVoice()
+        central?.stopScan()
+        peripheral?.delegate = nil
+        if let peripheral { central?.cancelPeripheralConnection(peripheral) }
+        central?.delegate = nil
+        peripheral = nil
         serviceTimer?.cancel()
         serviceTimer = nil
     }
 
     deinit {
+        reconnectWorkItem?.cancel()
         serviceTimer?.cancel()
         holdWorkItem?.cancel()
         reopenWorkItem?.cancel()

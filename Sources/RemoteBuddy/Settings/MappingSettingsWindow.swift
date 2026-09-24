@@ -208,6 +208,7 @@ private final class MappingRowCell: NSTableCellView {
 
 final class MappingSettingsWindow: NSWindowController, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate {
     var onVisibilityChange: ((Bool) -> Void)?
+    var onRemoteSettings: (() -> Void)?
     private let store: MappingStore
     private var draft: MappingConfiguration
     private let table = NSTableView()
@@ -240,6 +241,10 @@ final class MappingSettingsWindow: NSWindowController, NSWindowDelegate, NSTable
     private func build() {
         guard let content = window?.contentView else { return }
         content.addSubview(settingsLabel(L10n.tr("按键设置"), frame: NSRect(x: 24, y: 610, width: 832, height: 32), size: 24))
+        let remote = NSButton(title: L10n.tr("遥控器设置…"), target: self, action: #selector(openRemoteSettings))
+        remote.frame = NSRect(x: 706, y: 610, width: 150, height: 32)
+        remote.bezelStyle = .rounded
+        content.addSubview(remote)
         let intro = settingsLabel(L10n.tr("为每个按键选择动作。保存后立即生效，重启也会保留。"), frame: NSRect(x: 24, y: 579, width: 832, height: 24))
         intro.textColor = .secondaryLabelColor
         content.addSubview(intro)
@@ -364,6 +369,7 @@ final class MappingSettingsWindow: NSWindowController, NSWindowDelegate, NSTable
         }
     }
     @objc private func restoreDefaults() { draft = .defaults; table.reloadData(); showSelection(); errorLabel.stringValue = L10n.tr("已恢复初始映射，点击保存后应用。") }
+    @objc private func openRemoteSettings() { onRemoteSettings?() }
     @objc private func cancel() { window?.close() }
     @objc private func save() {
         window?.makeFirstResponder(nil)

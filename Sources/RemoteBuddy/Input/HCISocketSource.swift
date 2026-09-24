@@ -2,7 +2,8 @@ import Darwin
 import Foundation
 import OSLog
 
-/// User-side client. The root-owned service exposes only addressed HID reports.
+/// User-side client. The service exposes addressed reports and a bounded,
+/// validated device-selection operation; it never accepts executable commands.
 final class HCISocketSource {
     var onReport: (([UInt8]) -> Void)?
     var onActive: ((Bool) -> Void)?
@@ -17,6 +18,9 @@ final class HCISocketSource {
     private var expectedAddress: String?
     private var lastMessage = ProcessInfo.processInfo.systemUptime
     private var status = ""
+    private var supportsConfiguration = false
+    private var configurationRequest: (value: RemoteConfiguration, started: TimeInterval,
+        completion: (Result<RemoteConfiguration, Error>) -> Void)?
 
     private struct Message: Decodable {
         let type: String
@@ -26,6 +30,8 @@ final class HCISocketSource {
         let bytes: [UInt8]?
         let ready: Bool?
         let remote_connected: Bool?
+        let protocol_version: Int?
+        let configuration: RemoteConfiguration?
     }
 
     func start() {
@@ -35,7 +41,8 @@ final class HCISocketSource {
             guard let self else { return }
             if self.descriptor < 0 {
                 self.connect()
-            } else if ProcessInfo.processInfo.systemUptime - self.lastMessage > 4 {
+            } else if ProcessInfo.processInfo.systemUptime - self.lastMessage > 4 ||
+                        self.configurationRequest.map({ ProcessInfo.processInfo.systemUptime - $0.started > 4 }) == true {
                 self.disconnect()
             }
         }
@@ -49,6 +56,24 @@ final class HCISocketSource {
         disconnect()
     }
 
+    func configure(_ value: RemoteConfiguration, completion: @escaping (Result<RemoteConfiguration, Error>) -> Void) {
+        guard descriptor >= 0 else { completion(.failure(RemoteSettingsError.unavailableService)); return }
+        guard supportsConfiguration else { completion(.failure(RemoteSettingsError.outdatedService)); return }
+        guard configurationRequest == nil else { completion(.failure(RemoteSettingsError.saveFailed)); return }
+        do {
+            let encoded = try JSONEncoder().encode(value)
+            guard var object = try JSONSerialization.jsonObject(with: encoded) as? [String: Any] else {
+                throw RemoteSettingsError.saveFailed
+            }
+            object["type"] = "configure"
+            var request = try JSONSerialization.data(withJSONObject: object)
+            request.append(10)
+            configurationRequest = (value, ProcessInfo.processInfo.systemUptime, completion)
+            let sent = request.withUnsafeBytes { Darwin.send(descriptor, $0.baseAddress, $0.count, 0) }
+            if sent != request.count { disconnect() }
+        } catch { completion(.failure(error)) }
+    }
+
     private func connect() {
         guard let configuredAddress = RemoteIdentity.configuredAddress else {
             setStatus(L10n.tr("按键：等待兼容辅助服务"))
@@ -57,6 +82,8 @@ final class HCISocketSource {
         expectedAddress = configuredAddress
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { return }
+        var noSignal: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout<Int32>.size))
         guard fcntl(fd, F_SETFL, O_NONBLOCK) == 0 else { Darwin.close(fd); return }
         var address = sockaddr_un()
         address.sun_family = sa_family_t(AF_UNIX)
@@ -89,11 +116,15 @@ final class HCISocketSource {
     }
 
     private func disconnect() {
+        let request = configurationRequest
+        configurationRequest = nil
+        supportsConfiguration = false
         source?.cancel()
         source = nil
         descriptor = -1
         pending.removeAll()
         setActive(false)
+        request?.completion(.failure(RemoteSettingsError.saveFailed))
     }
 
     private func readAvailable() {
@@ -118,11 +149,22 @@ final class HCISocketSource {
                     return
                 }
                 lastMessage = ProcessInfo.processInfo.systemUptime
+                if message.type == "configured" || message.type == "configuration_error" {
+                    let request = configurationRequest
+                    configurationRequest = nil
+                    if let request, message.type == "configured", message.configuration == request.value {
+                        request.completion(.success(request.value))
+                    } else {
+                        request?.completion(.failure(RemoteSettingsError.saveFailed))
+                    }
+                    return
+                }
                 let now = Date().timeIntervalSince1970
                 let age = now - message.received_at
                 guard age >= -0.1, age < 0.25 else { onReset?(); continue }
                 switch message.type {
                 case "connected":
+                    supportsConfiguration = (message.protocol_version ?? 1) >= 2
                     setStatus(L10n.tr("按键：正在等待遥控器数据"))
                 case "heartbeat":
                     if message.ready == true, message.remote_connected == true {

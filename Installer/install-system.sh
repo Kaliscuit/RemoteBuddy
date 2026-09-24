@@ -63,5 +63,10 @@ cp "$RB_ROOT/generated/daemon.plist" "/Library/LaunchDaemons/$RB_LABEL.hci.plist
 chown root:wheel "$RB_SERVICE" "$RB_SERVICE/hci_helper.py" "$RB_SERVICE/hci-config.json" "/Library/LaunchDaemons/$RB_LABEL.hci.plist"
 chmod 755 "$RB_SERVICE"
 chmod 644 "$RB_SERVICE/hci_helper.py" "$RB_SERVICE/hci-config.json" "/Library/LaunchDaemons/$RB_LABEL.hci.plist"
-launchctl bootstrap system "/Library/LaunchDaemons/$RB_LABEL.hci.plist"
+# bootout can return before launchd has fully removed the old registration.
+for rb_attempt in {1..10}; do
+  if launchctl bootstrap system "/Library/LaunchDaemons/$RB_LABEL.hci.plist"; then break; fi
+  [[ "$rb_attempt" -lt 10 ]] || rb_fail 'Could not restart the HCI helper.'
+  sleep 0.5
+done
 print 'System components installed. Bluetooth capture starts only when the app connects.'

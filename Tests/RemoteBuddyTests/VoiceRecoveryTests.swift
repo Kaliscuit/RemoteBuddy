@@ -219,6 +219,19 @@ final class VoiceRecoveryTests: XCTestCase {
         ble.stop()
     }
 
+    func testIdleStopAcknowledgementDoesNotOverwriteSettingsStatus() {
+        let ble = controller(AudioOutput(), Keyboard())
+        var messages: [String] = []
+        ble.onStatus = { messages.append($0) }
+        ble.setConfiguring(true)
+        ble.setConfiguring(false)
+        let expected = messages
+        ble.handle(.audioStop(reason: 0))
+        ble.handle(.audioStop(reason: 2))
+        XCTAssertEqual(messages, expected)
+        ble.stop()
+    }
+
     func testRemoteHoldReleaseDoesNotCloseAnAlreadyStoppedStream() {
         let audio = AudioOutput()
         let keyboard = Keyboard()

@@ -86,6 +86,19 @@ Replace the sample address. The optional third argument is the ATT report handle
 
 ### Replacing a remote
 
+After updating the app and helper, use **Remote Settings…** in the menu bar
+(also available from Button Settings):
+
+1. Pair and connect the new remote in macOS Bluetooth settings.
+2. Click **Refresh** and select the remote. Addresses distinguish devices with the same name.
+3. Leave **Detect compatibility settings automatically** enabled and check the manufacturer, model, firmware, and match.
+4. Click **Save & Connect**, close settings, and test buttons and voice. No reinstall or manual restart is needed, and mappings are preserved.
+
+The list shows connected Chromecast remotes; pairing remains in macOS Bluetooth
+settings. Automatic detection supports the verified combinations below. It does
+not guess from names or probe unknown handles. Refresh and identify again after
+a firmware update.
+
 Identical Bluetooth names do not guarantee identical firmware or report formats.
 ABBEY / 22.2 uses `0x46` and `indexed`. The supported `zhuhai_jieli` /
 `hid_mouse` / 0.0.1 variant uses `0x2b` and `consumer16`; the helper translates
@@ -96,13 +109,17 @@ With a release containing this support, select the format using the fourth argum
 ./Install.command "$HOME/Applications/PacketLogger.app" 'AA:BB:CC:DD:EE:FF' 0x2b consumer16
 ```
 
-For an existing installation, device settings are in
-`/Library/Application Support/RemoteMic/hci-config.json`. Back it up, update
-`address`, and set `attribute` (`43` in JSON for `0x2b`) and `report_format` to
-match the device. Missing `report_format` defaults to `indexed`. Keep the file
-root-owned and writable only by root, restart the system helper and RemoteBuddy,
-then reconnect the remote. Changing only the address cannot fix a different
-report format; diagnose other firmware before selecting its parameters.
+You can also enter an address manually, using colons or hyphens. Keep verified
+settings when replacing a remote with the same model. For an unknown model,
+disable automatic detection and enter a verified format and handle; the app will
+not automatically apply the old protocol. If the helper is too old, run the new
+installer once. Replacing only the `.app` does not upgrade the helper.
+
+Settings remain in `/Library/Application Support/RemoteMic/hci-config.json`.
+The helper atomically updates the root-owned, mode-0644 file. Device fields are
+`address`, `attribute`, `report_format`, `peripheral_id` (voice device identity),
+and `auto_detect`. Legacy configurations need no migration; a missing format
+still defaults to `indexed`.
 
 The voice release-delay workaround is selected automatically from the remote's
 manufacturer, model, and firmware. All three must match the tested Jieli variant;

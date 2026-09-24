@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Generate launchd/configuration files without writing to system locations.
 
-Only install-system.sh installs these files. This module is also used in tests.
+install-system.sh installs these files; the helper can later update only the
+device-selection fields. This module is also used in tests.
 """
 import argparse
 import json

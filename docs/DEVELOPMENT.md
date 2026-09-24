@@ -71,6 +71,11 @@ Internal `local.codex.RemoteMic` IDs and the `RemoteMic` config directory are ke
 to preserve existing installations. User home/UID/GID/remote address are generated
 at install time. The user-side client reads the remote identity from the root-owned
 helper config. It never learns a remote identity from arbitrary socket messages.
+Protocol v2 permits the configured user to update only validated device-selection
+fields. The app reads back the root-owned file before switching both button and
+voice connections. User mappings and privileged service paths are not editable
+through that operation. Test format validation, atomic-write failure, peer
+ownership, old helpers, and same-name device selection when changing this path.
 
 PacketLogger records begin with cached metadata timestamps as well as live packets.
 Do not calibrate live events from the first record. The FIFO is live-only; IPC
