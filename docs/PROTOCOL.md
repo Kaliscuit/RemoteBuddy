@@ -17,6 +17,32 @@ one or two valid remote key bytes. It sends only filtered reports to the selecte
 user over a mode-0600 Unix socket, validating peer UID. The app validates root
 peer identity and rejects stale events. Disconnects and a watchdog release keys.
 
+The `zhuhai_jieli` / `hid_mouse` / 0.0.1 variant sends a two-byte little-endian
+Consumer Usage on handle `0x002b`. With `report_format: "consumer16"`, the helper
+normalizes the 14 observed buttons and release reports to the existing IDs.
+Unknown usages, incorrect lengths, and other devices/attributes are rejected.
+`indexed` remains the default for older configurations; payload formats are not guessed.
+
+This variant also delays the voice release notification: even a tap with no audio
+has about 1.3 seconds between AUDIO_START and AUDIO_STOP. The app reads the
+manufacturer (0x2A29), model (0x2A24), and firmware (0x2A26) from Device Information.
+`RemoteCompatibilityProfile` enables the workaround only when all three match
+`zhuhai_jieli` / `hid_mouse` / `0.0.1`. It promotes a press to a hold after 550 ms of
+decoded audio, including silence, instead of counting the delayed notification.
+A short press opens a continuous stream after release. A subsequent physical
+press stops it even when the firmware reuses the current stream ID.
+
+Other manufacturers, models, firmware versions, or incomplete device information
+keep the standard elapsed-time gesture detection. Matching ignores case and
+surrounding string padding but does not use prefixes or the Bluetooth display
+name. Identity is cleared when connecting to a device. This automatic voice
+profile does not change the helper's explicitly configured HID handle or format;
+an unknown device still requires protocol verification before adding support.
+
+A remote-initiated voice stop ends the local gesture without sending another
+MIC_CLOSE. Stop acknowledgements reset local state without further commands,
+preventing a feedback loop on firmware that acknowledges every close.
+
 Microphone data takes the independent public ATVV BLE service path, with standard
 IMA ADPCM decoding and BlackHole audio output. A working voice path alone does not
 prove button delivery. No raw recordings, live device addresses or private capture

@@ -84,6 +84,30 @@ Optional arguments:
 Replace the sample address. The optional third argument is the ATT report handle;
 `0x46` is verified for ABBEY 22.2. It may change with firmware.
 
+### Replacing a remote
+
+Identical Bluetooth names do not guarantee identical firmware or report formats.
+ABBEY / 22.2 uses `0x46` and `indexed`. The supported `zhuhai_jieli` /
+`hid_mouse` / 0.0.1 variant uses `0x2b` and `consumer16`; the helper translates
+its Consumer usages to the existing button IDs, preserving personal mappings.
+With a release containing this support, select the format using the fourth argument:
+
+```sh
+./Install.command "$HOME/Applications/PacketLogger.app" 'AA:BB:CC:DD:EE:FF' 0x2b consumer16
+```
+
+For an existing installation, device settings are in
+`/Library/Application Support/RemoteMic/hci-config.json`. Back it up, update
+`address`, and set `attribute` (`43` in JSON for `0x2b`) and `report_format` to
+match the device. Missing `report_format` defaults to `indexed`. Keep the file
+root-owned and writable only by root, restart the system helper and RemoteBuddy,
+then reconnect the remote. Changing only the address cannot fix a different
+report format; diagnose other firmware before selecting its parameters.
+
+The voice release-delay workaround is selected automatically from the remote's
+manufacturer, model, and firmware. All three must match the tested Jieli variant;
+other devices keep the original gesture timing. See [protocol compatibility](PROTOCOL.md).
+
 ## Verify operation
 
 The menu bar should show the remote icon, voice **Ready** and **Buttons:

@@ -17,6 +17,12 @@ final class VoiceRecoveryTests: XCTestCase {
         return result
     }
 
+    private func identifyDelayedReleaseRemote(_ ble: BLEController) {
+        for (uuid, value) in [("2A29", "zhuhai_jieli"), ("2A24", "hid_mouse"), ("2A26", "0.0.1")] {
+            ble.updateDeviceInformation(uuid: uuid, value: Data(value.utf8))
+        }
+    }
+
     func testPrefixIsNotConsumedBeforeInputMethodStartup() {
         let ring = SampleRing()
         ring.beginCapture()
@@ -188,6 +194,124 @@ final class VoiceRecoveryTests: XCTestCase {
         let ble = controller(audio, keyboard)
         ble.handle(.audioStart(reason: 3, codec: .adpcm16k, streamID: 1))
         ble.handle(.error(0x0f80))
+        ble.handle(.audioStop(reason: 2))
+        XCTAssertEqual(keyboard.taps, 1)
+        ble.stop()
+    }
+
+    func testRemoteStopAcknowledgementDoesNotCreateCloseLoop() {
+        let audio = AudioOutput()
+        let keyboard = Keyboard()
+        var commands: [Data] = []
+        let ble = controller(audio, keyboard) { commands.append($0) }
+        // This firmware acknowledges MIC_CLOSE even if it was already idle.
+        for _ in 0..<3 { ble.handle(.audioStop(reason: 0)) }
+        XCTAssertTrue(commands.isEmpty)
+        ble.handle(.startSearch)
+        ble.handle(.audioStart(reason: 0, codec: .adpcm16k, streamID: 1))
+        commands.removeAll()
+        ble.handle(.audioStop(reason: 8))
+        XCTAssertEqual(keyboard.taps, 2)
+        XCTAssertTrue(commands.isEmpty)
+        ble.handle(.audioStop(reason: 0))
+        XCTAssertEqual(keyboard.taps, 2)
+        XCTAssertTrue(commands.isEmpty)
+        ble.stop()
+    }
+
+    func testRemoteHoldReleaseDoesNotCloseAnAlreadyStoppedStream() {
+        let audio = AudioOutput()
+        let keyboard = Keyboard()
+        var commands: [Data] = []
+        let ble = controller(audio, keyboard) { commands.append($0) }
+        for streamID: UInt8 in [1, 2] {
+            ble.handle(.audioStart(reason: 3, codec: .adpcm16k, streamID: streamID))
+            let threshold = expectation(description: "hold threshold")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { threshold.fulfill() }
+            wait(for: [threshold], timeout: 1.5)
+            ble.receiveAudio(Data([0x71]))
+            ble.handle(.audioStop(reason: 2))
+            ble.checkVoiceHealth(now: ProcessInfo.processInfo.systemUptime + 2.1)
+        }
+        XCTAssertEqual(keyboard.holds, [true, false, true, false])
+        XCTAssertFalse(commands.contains { $0.first == 0x0d })
+        ble.stop()
+    }
+
+    func testDelayedReleaseTapsStartAndStopToggleWithReusedStreamID() {
+        for packetCount in [0, 9] {
+            let audio = AudioOutput()
+            let keyboard = Keyboard()
+            var commands: [Data] = []
+            let ble = controller(audio, keyboard) { commands.append($0) }
+            identifyDelayedReleaseRemote(ble)
+            ble.handle(.audioStart(reason: 3, codec: .adpcm16k, streamID: 0))
+            for _ in 0..<packetCount { ble.receiveAudio(Data(repeating: 0, count: 128)) }
+            // Real taps on this firmware take 1.3–1.5 s to report release,
+            // with either no audio or only 144 ms of audio in the capture.
+            let release = expectation(description: "delayed release")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { release.fulfill() }
+            wait(for: [release], timeout: 3)
+            XCTAssertTrue(keyboard.holds.isEmpty)
+            XCTAssertEqual(keyboard.taps, 0)
+            ble.handle(.audioStop(reason: 2))
+            XCTAssertEqual(keyboard.taps, 1)
+            let reopen = expectation(description: "continuous microphone open")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { reopen.fulfill() }
+            wait(for: [reopen], timeout: 1)
+            XCTAssertEqual(commands, [Data([0x0c, 0])])
+            ble.handle(.audioStart(reason: 0, codec: .adpcm16k, streamID: 0))
+            ble.receiveAudio(Data(repeating: 0, count: 128))
+            ble.handle(.audioStart(reason: 3, codec: .adpcm16k, streamID: 0))
+            XCTAssertEqual(commands.last, Data([0x0d, 0xff]))
+            ble.handle(.audioStop(reason: 0))
+            ble.checkVoiceHealth(now: ProcessInfo.processInfo.systemUptime + 2.1)
+            ble.handle(.audioStop(reason: 2))
+            XCTAssertEqual(keyboard.taps, 2)
+            XCTAssertTrue(keyboard.holds.isEmpty)
+            XCTAssertEqual(commands.count, 2)
+            ble.stop()
+            XCTAssertEqual(keyboard.taps, 2)
+        }
+    }
+
+    func testDelayedReleaseHoldCountsQuietAudioAndPreservesBufferedPrefix() {
+        let audio = AudioOutput()
+        let keyboard = Keyboard()
+        var commands: [Data] = []
+        let ble = controller(audio, keyboard) { commands.append($0) }
+        identifyDelayedReleaseRemote(ble)
+        ble.handle(.audioStart(reason: 3, codec: .adpcm16k, streamID: 0))
+        for _ in 0..<34 { ble.receiveAudio(Data(repeating: 0, count: 128)) }
+        XCTAssertTrue(keyboard.holds.isEmpty)
+        ble.receiveAudio(Data(repeating: 0, count: 128))
+        XCTAssertEqual(keyboard.holds, [true])
+        XCTAssertEqual(audio.queuedSamples, 35 * 256)
+        // A duplicate START during the same physical hold remains a no-op.
+        ble.handle(.audioStart(reason: 3, codec: .adpcm16k, streamID: 0))
+        ble.handle(.audioStop(reason: 2))
+        ble.checkVoiceHealth(now: ProcessInfo.processInfo.systemUptime + 2.1)
+        XCTAssertEqual(keyboard.holds, [true, false])
+        XCTAssertEqual(keyboard.taps, 0)
+        XCTAssertTrue(commands.isEmpty)
+        // Audio from the previous hold must not classify the next tap.
+        ble.handle(.audioStart(reason: 3, codec: .adpcm16k, streamID: 0))
+        ble.receiveAudio(Data(repeating: 0, count: 128))
+        ble.handle(.audioStop(reason: 2))
+        XCTAssertEqual(keyboard.taps, 1)
+        XCTAssertEqual(keyboard.holds, [true, false])
+        ble.stop()
+    }
+
+    func testDeviceInformationArrivingDuringPressPreventsFalseHold() {
+        let keyboard = Keyboard()
+        let ble = controller(AudioOutput(), keyboard)
+        ble.handle(.audioStart(reason: 3, codec: .adpcm16k, streamID: 0))
+        identifyDelayedReleaseRemote(ble)
+        let threshold = expectation(description: "old hold timer")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { threshold.fulfill() }
+        wait(for: [threshold], timeout: 1.5)
+        XCTAssertTrue(keyboard.holds.isEmpty)
         ble.handle(.audioStop(reason: 2))
         XCTAssertEqual(keyboard.taps, 1)
         ble.stop()

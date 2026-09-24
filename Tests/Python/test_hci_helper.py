@@ -55,6 +55,35 @@ class HelperTests(unittest.TestCase):
         self.assertIsNone(self.decoder.accept(3, first))
         self.assertEqual(self.decoder.accept(3, second), [7, 5])
 
+    def test_consumer_remote_preserves_existing_button_mapping_ids(self):
+        decoder = helper.RemoteReports("AA:BB:CC:DD:EE:FF", 0x2b, "consumer16")
+        decoder.accept(0xfd, configuration())
+        # Up, down, left, right, select, back, home, volume +/-, mute,
+        # YouTube, Netflix, power, input. Each press is followed by release.
+        usages = [0x42, 0x43, 0x44, 0x45, 0x41, 0x224, 0x223,
+                  0xe9, 0xea, 0xe2, 0x77, 0x78, 0x19e, 0x189]
+        buttons = [3, 4, 5, 6, 7, 11, 10, 12, 13, 8, 14, 15, 1, 17]
+        for usage, button in zip(usages, buttons):
+            report = notification(struct.pack("<H", usage), attribute=0x2b)
+            self.assertEqual(decoder.accept(3, report), [button])
+            self.assertEqual(decoder.accept(3, notification([0, 0], attribute=0x2b)), [0])
+
+    def test_consumer_reports_still_require_matching_identity_attribute_and_format(self):
+        decoder = helper.RemoteReports("AA:BB:CC:DD:EE:FF", 0x2b, "consumer16")
+        self.assertIsNone(decoder.accept(3, notification([0x42, 0], attribute=0x2b)))
+        decoder.accept(0xfd, configuration())
+        for packet in (notification([0x42, 0]),
+                       notification([0x42, 0], connection=0x4d, attribute=0x2b),
+                       notification([0x42], attribute=0x2b),
+                       notification([0x42, 0, 0], attribute=0x2b),
+                       notification([0xff, 0xff], attribute=0x2b)):
+            self.assertIsNone(decoder.accept(3, packet))
+        # The original format must not mistake a Consumer usage for two keys.
+        self.decoder.accept(0xfd, configuration())
+        self.assertIsNone(self.decoder.accept(3, notification([0x42, 0])))
+        with self.assertRaises(ValueError):
+            helper.RemoteReports("AA:BB:CC:DD:EE:FF", 0x2b, "unknown")
+
     def test_streaming_frames_across_arbitrary_reads(self):
         expected = [(0xfd, configuration()), (3, notification([3])), (3, notification([0]))]
         for endian in (">", "<"):

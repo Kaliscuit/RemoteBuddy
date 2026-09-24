@@ -9,6 +9,10 @@ final class BLEController: NSObject, CBCentralManagerDelegate, CBPeripheralDeleg
     var shortcutsSuspended = false
     private let diagnostics = Logger(subsystem: "local.codex.RemoteMic", category: "device-info")
     private let deviceInformation = CBUUID(string: "180A")
+    private var remoteDeviceInformation = RemoteDeviceInformation()
+    private var usesAudioDurationForHold: Bool {
+        remoteDeviceInformation.compatibilityProfile.usesAudioDurationForHold
+    }
 
     private let audio: AudioOutput
     private var central: CBCentralManager!
@@ -103,6 +107,7 @@ final class BLEController: NSObject, CBCentralManagerDelegate, CBPeripheralDeleg
         subscribed.removeAll()
         requestedCapabilities = false
         session = ATVVSession()
+        remoteDeviceInformation = RemoteDeviceInformation()
         peripheral.discoverServices([service, deviceInformation])
     }
 
@@ -138,7 +143,7 @@ final class BLEController: NSObject, CBCentralManagerDelegate, CBPeripheralDeleg
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
         guard error == nil, let characteristics = service.characteristics else { return }
         if service.uuid == deviceInformation {
-            for item in characteristics where ["2A26", "2A27", "2A28", "2A24"].contains(item.uuid.uuidString) {
+            for item in characteristics where ["2A29", "2A26", "2A27", "2A28", "2A24"].contains(item.uuid.uuidString) {
                 peripheral.readValue(for: item)
             }
             return
@@ -186,6 +191,7 @@ final class BLEController: NSObject, CBCentralManagerDelegate, CBPeripheralDeleg
         }
         guard let data = characteristic.value else { return }
         if characteristic.service?.uuid == deviceInformation {
+            updateDeviceInformation(uuid: characteristic.uuid.uuidString, value: data)
             diagnostics.notice("Live device info uuid=\(characteristic.uuid.uuidString, privacy: .public) value=\(String(data: data, encoding: .utf8) ?? data.description, privacy: .public)")
             return
         }
@@ -193,6 +199,15 @@ final class BLEController: NSObject, CBCentralManagerDelegate, CBPeripheralDeleg
             receiveAudio(data)
         } else if characteristic.uuid == control || characteristic.uuid == command {
             handle(session.parseControl(data))
+        }
+    }
+
+    func updateDeviceInformation(uuid: String, value: Data) {
+        let previous = remoteDeviceInformation.compatibilityProfile
+        remoteDeviceInformation.update(uuid: uuid, value: value)
+        let profile = remoteDeviceInformation.compatibilityProfile
+        if previous != profile {
+            diagnostics.notice("Remote compatibility profile=\(profile.rawValue, privacy: .public) audioTimedHold=\(profile.usesAudioDurationForHold)")
         }
     }
 
@@ -210,6 +225,12 @@ final class BLEController: NSObject, CBCentralManagerDelegate, CBPeripheralDeleg
             peak = max(peak, abs(Int(sample)))
         })
         audio.feed(samples, sampleRate: codec.sampleRate)
+        // This firmware delays AUDIO_STOP by about a second after its last
+        // audio packet, making a tap look like a 1.3 s hold. Count decoded
+        // audio instead of that release delay; silent samples count as well.
+        if usesAudioDurationForHold, decodedAudioDuration >= Self.holdThreshold {
+            perform(voiceGesture.holdThresholdReached())
+        }
     }
 
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
@@ -233,7 +254,7 @@ final class BLEController: NSObject, CBCentralManagerDelegate, CBPeripheralDeleg
             audioDiagnostics.notice("Voice sync codec=\(codec.rawValue) sourceRate=\(codec.sampleRate) sequence=\(sequence)")
             session.applySync(codec: codec, sequence: sequence, predictor: predictor, stepIndex: stepIndex)
         case .audioStart(let reason, let codec, let streamID):
-            if streaming, reason == 0x03, session.streamID == streamID { return }
+            if streaming, reason == 0x03, voiceGesture.isPressed, session.streamID == streamID { return }
             if reason == 0x03 {
                 onVoiceButtonActivity?(true)
                 if !shortcutsSuspended {
@@ -266,7 +287,7 @@ final class BLEController: NSObject, CBCentralManagerDelegate, CBPeripheralDeleg
             maxPacketGap = 0
             decodedAudioDuration = 0
             gainClippedSamples = 0
-            audioDiagnostics.notice("Voice start decoder=ATVV-high-first codec=\(codec.rawValue) sourceRate=\(codec.sampleRate) suspended=\(self.shortcutsSuspended) \(self.audio.diagnosticSummary, privacy: .public)")
+            audioDiagnostics.notice("Voice start reason=\(reason) streamID=\(streamID) audioTimedHold=\(self.usesAudioDurationForHold) decoder=ATVV-high-first codec=\(codec.rawValue) sourceRate=\(codec.sampleRate) suspended=\(self.shortcutsSuspended) \(self.audio.diagnosticSummary, privacy: .public)")
             watchdog.awaitingStream(at: streamStartedAt)
             nextKeepAlive = streamStartedAt + 4
             onStreaming?(true)
@@ -283,7 +304,7 @@ final class BLEController: NSObject, CBCentralManagerDelegate, CBPeripheralDeleg
                 onVoiceButtonActivity?(false)
                 holdWorkItem?.cancel()
                 holdWorkItem = nil
-                perform(voiceGesture.pressUp())
+                perform(voiceGesture.pressUp(), remoteAlreadyStopped: true)
                 if !voiceGesture.toggleActive { watchdog.invalidate() }
                 onStreaming?(voiceGesture.toggleActive || pendingShortcutStop != nil)
             } else if reason == 0x04 {
@@ -319,9 +340,11 @@ final class BLEController: NSObject, CBCentralManagerDelegate, CBPeripheralDeleg
 
     private func scheduleHoldThreshold() {
         holdWorkItem?.cancel()
+        holdWorkItem = nil
+        guard !usesAudioDurationForHold else { return }
         let generation = watchdog.generation
         let work = DispatchWorkItem { [weak self] in
-            guard let self, self.watchdog.generation == generation else { return }
+            guard let self, self.watchdog.generation == generation, !self.usesAudioDurationForHold else { return }
             self.holdWorkItem = nil
             self.perform(self.voiceGesture.holdThresholdReached())
         }
@@ -329,7 +352,7 @@ final class BLEController: NSObject, CBCentralManagerDelegate, CBPeripheralDeleg
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.holdThreshold, execute: work)
     }
 
-    private func perform(_ actions: [VoiceGestureAction]) {
+    private func perform(_ actions: [VoiceGestureAction], remoteAlreadyStopped: Bool = false) {
         for action in actions {
             switch action {
             case .fnDown:
@@ -376,7 +399,7 @@ final class BLEController: NSObject, CBCentralManagerDelegate, CBPeripheralDeleg
             case .closeMicrophone:
                 cancelPendingWork()
                 if streaming { watchdog.requestedStop(at: ProcessInfo.processInfo.systemUptime) }
-                if let command = session.closeCommand() { write(command) }
+                if !remoteAlreadyStopped, let command = session.closeCommand() { write(command) }
                 audio.endCapture()
             }
         }
@@ -433,7 +456,10 @@ final class BLEController: NSObject, CBCentralManagerDelegate, CBPeripheralDeleg
             cancelPendingWork()
             _ = voiceGesture.reset()
         } else {
-            resetVoice()
+            // The remote has already stopped. Sending MIC_CLOSE here makes
+            // firmware that acknowledges every close send another AUDIO_STOP,
+            // recursively generating close/stop traffic even while idle.
+            resetVoice(closeMicrophone: false)
         }
     }
 

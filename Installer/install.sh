@@ -19,6 +19,8 @@ rb_verify_dependencies
 rb_tool="${1:-}"
 rb_address="${2:-}"
 rb_attribute="${3:-0x46}"
+rb_format="${4:-indexed}"
+[[ "$rb_format" == indexed || "$rb_format" == consumer16 ]] || rb_fail 'Unsupported remote report format.'
 if [[ -z "$rb_tool" && -d "$RB_ROOT/PrivateDependencies/PacketLogger.app" ]]; then
   rb_tool="$RB_ROOT/PrivateDependencies/PacketLogger.app"
   print '使用自用包中的原版 PacketLogger / Using the original PacketLogger from this personal package.'
@@ -47,7 +49,7 @@ print -r -- "  RemoteBuddy → $HOME/Applications (login startup)"
 print '  BlackHole 2ch + Python 3.13 (install if missing/outdated)'
 print '  Python 3.13 framework: root-owned, read-only to other users for the system helper'
 print '  A system HCI helper restricted to your user and remote'
-print -r -- "  Remote: $rb_address; ATT handle: $rb_attribute"
+print -r -- "  Remote: $rb_address; ATT handle: $rb_attribute; report format: $rb_format"
 print '蓝牙兼容描述文件和蓝牙/辅助功能权限需要在系统设置中手动确认。'
 print 'The Bluetooth profile and Bluetooth/Accessibility permissions require confirmation in System Settings.'
 read -r 'rb_answer?继续安装？/ Continue? [y/N] '
@@ -58,7 +60,7 @@ for rb_dir in Installer Helpers Dependencies; do /usr/bin/ditto "$RB_ROOT/$rb_di
 /usr/bin/ditto "$rb_app" "$rb_stage/RemoteBuddy.app"
 /usr/bin/ditto "$rb_tool" "$rb_stage/PacketLogger.app"
 # Keep the stage on failure for diagnosis; remove after a successful install.
-sudo /bin/zsh "$rb_stage/Installer/install-system.sh" "$rb_stage" "$rb_user" "$rb_address" "$rb_attribute"
+sudo /bin/zsh "$rb_stage/Installer/install-system.sh" "$rb_stage" "$rb_user" "$rb_address" "$rb_attribute" "$rb_format"
 /bin/zsh "$RB_ROOT/Installer/install-user.sh" "$rb_stage/RemoteBuddy.app" "$rb_stage/generated/agent.plist"
 open "$RB_ROOT/Resources/RemoteBuddy-Bluetooth.mobileconfig"
 print '在系统设置中安装 RemoteBuddy Bluetooth Compatibility，然后重启 Mac。'

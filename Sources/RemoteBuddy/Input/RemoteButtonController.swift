@@ -53,6 +53,15 @@ final class RemoteButtonController {
 
     func start() {
         stop()
+        // The HCI bridge also needs repeat/release timers and error reporting,
+        // even when macOS refuses access to the native HID device.
+        actionSender.onError = { [weak self] in self?.onStatus?($0) }
+        let timer = Timer(timeInterval: 0.02, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            self.apply(self.state.tick(now: ProcessInfo.processInfo.systemUptime))
+        }
+        self.timer = timer
+        RunLoop.main.add(timer, forMode: .common)
         let manager = IOHIDManagerCreate(kCFAllocatorDefault, 0)
         IOHIDManagerSetDeviceMatching(manager, [kIOHIDVendorIDKey: Self.vendorID,
             kIOHIDProductIDKey: Self.productID] as CFDictionary)
@@ -70,13 +79,6 @@ final class RemoteButtonController {
             return
         }
         self.manager = manager
-        actionSender.onError = { [weak self] in self?.onStatus?($0) }
-        let timer = Timer(timeInterval: 0.02, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            self.apply(self.state.tick(now: ProcessInfo.processInfo.systemUptime))
-        }
-        self.timer = timer
-        RunLoop.main.add(timer, forMode: .common)
         onStatus?(L10n.tr("按键：等待遥控器…"))
     }
 
