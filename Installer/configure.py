@@ -21,12 +21,15 @@ def address(value):
     return value.upper()
 
 
-def documents(uid, gid, home, remote, attribute=0x46):
+def documents(uid, gid, home, remote, attribute=0x46, report_format="indexed"):
     if uid < 501 or gid < 0 or not str(home).startswith("/"):
         raise ValueError("Select a regular macOS user account with an absolute home directory")
     if not 1 <= attribute <= 0xFFFF:
         raise ValueError("ATT handle must be between 1 and 65535")
+    if report_format not in ("indexed", "consumer16"):
+        raise ValueError("Unsupported remote report format")
     config = dict(uid=uid, gid=gid, address=address(remote), attribute=attribute,
+                  report_format=report_format,
                   socket=f"/var/run/{LABEL}.hci.sock", packetlogger=str(SERVICE / "PacketLogger.app/Contents/Resources/packetlogger"))
     daemon = dict(Label=LABEL + ".hci", ProgramArguments=[PYTHON, "-I", "-S", "-B", "-u", str(SERVICE / "hci_helper.py")],
                   RunAtLoad=True, KeepAlive=True, ThrottleInterval=5, ProcessType="Background",
@@ -42,10 +45,11 @@ def main():
     parser.add_argument("--user", required=True)
     parser.add_argument("--address", required=True)
     parser.add_argument("--attribute", type=lambda value: int(value, 0), default=0x46)
+    parser.add_argument("--report-format", choices=("indexed", "consumer16"), default="indexed")
     parser.add_argument("--output", type=pathlib.Path, required=True)
     args = parser.parse_args()
     account = pwd.getpwnam(args.user)
-    config, daemon, agent = documents(account.pw_uid, account.pw_gid, account.pw_dir, args.address, args.attribute)
+    config, daemon, agent = documents(account.pw_uid, account.pw_gid, account.pw_dir, args.address, args.attribute, args.report_format)
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "hci-config.json").write_text(json.dumps(config, indent=2) + "\n")
     (args.output / "daemon.plist").write_bytes(plistlib.dumps(daemon))

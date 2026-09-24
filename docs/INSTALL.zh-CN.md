@@ -73,6 +73,27 @@ PacketLogger 提供按键兼容通道需要的实时 HCI 数据，不是可随�
 地址是示例，必须替换为自己的。默认 ATT 报告句柄为 `0x46`，适用于已验证的固件；
 第三个参数可指定经过诊断确认的新句柄。更新固件后若失效，应重新检查协议，不要盲目扫描其他设备。
 
+### 更换遥控器
+
+设备名称相同不代表固件和按键格式相同。原版 ABBEY / 22.2 使用 `0x46` 和
+`indexed`；已适配的 `zhuhai_jieli` / `hid_mouse` / 0.0.1 使用 `0x2b` 和
+`consumer16`。后者会转换为原有的按键编号，保留个人映射。
+
+使用包含此适配的新安装包时，可为后一种设备指定第四个参数：
+
+```sh
+./Install.command "$HOME/Applications/PacketLogger.app" 'AA:BB:CC:DD:EE:FF' 0x2b consumer16
+```
+
+已安装用户的设备参数位于 `/Library/Application Support/RemoteMic/hci-config.json`：
+更新 `address`，并按实际固件设置 `attribute`（JSON 中 `0x2b` 写作 `43`）和
+`report_format`。旧配置没有 `report_format` 时默认使用 `indexed`。修改前备份配置，
+修改后重启系统辅助服务和 RemoteBuddy，并重新连接遥控器。配置需保持 root 所有且仅 root 可写。
+只更新地址不能解决固件格式变化；其他固件需要先核对实际报告。
+
+语音松键延迟补偿会自动读取厂商、型号和固件，三者全部匹配上述已验证的 Jieli 设备才启用；
+其他设备保留原来的手势计时逻辑。详见[协议兼容说明](PROTOCOL.zh-CN.md)。
+
 ## 检查
 
 安装成功后，应看到菜单栏遥控器图标、语音“已就绪”和“按键：兼容桥接已连接”。

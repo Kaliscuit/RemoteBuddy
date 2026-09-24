@@ -38,6 +38,13 @@ class ConfigurationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 configure.documents(uid, 20, home, address, attribute)
 
+    def test_consumer_remote_configuration_and_unknown_format(self):
+        config, _, _ = configure.documents(501, 20, "/Users/demo", "AA:BB:CC:DD:EE:FF", 0x2b, "consumer16")
+        self.assertEqual(config["attribute"], 0x2b)
+        self.assertEqual(config["report_format"], "consumer16")
+        with self.assertRaises(ValueError):
+            configure.documents(501, 20, "/Users/demo", "AA:BB:CC:DD:EE:FF", 0x2b, "unknown")
+
     def test_dependency_verification_fails_even_when_later_files_match(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = pathlib.Path(temporary)

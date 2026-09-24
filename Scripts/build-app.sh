@@ -29,5 +29,7 @@ else
   codesign --force --sign - --requirements '=designated => identifier "local.codex.RemoteMic"' "$app"
 fi
 codesign --verify --deep --strict "$app"
-lipo "$app/Contents/MacOS/RemoteBuddy" -verify_arch arm64 x86_64
+for arch in arm64 x86_64; do
+  lipo "$app/Contents/MacOS/RemoteBuddy" -verify_arch "$arch"
+done
 print -r -- "Built $app"

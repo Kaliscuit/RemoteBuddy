@@ -7,6 +7,7 @@ source "$RB_ROOT/Installer/common.sh"
 rb_user="${2:?target user required}"
 rb_address="${3:?remote address required}"
 rb_attribute="${4:-0x46}"
+rb_format="${5:-indexed}"
 [[ "$rb_user" =~ '^[a-zA-Z_][a-zA-Z0-9_.-]*$' ]] || rb_fail 'Invalid account name.'
 [[ "$(id -u "$rb_user")" -ge 501 ]] || rb_fail 'Select a normal user account.'
 rb_verify_dependencies
@@ -35,7 +36,7 @@ for item in [p, *p.parents]:
         raise SystemExit("Python runtime path must be root-owned and not writable by other users: " + str(item))
 '
 "$RB_PYTHON" -I -S "$RB_ROOT/Installer/configure.py" --user "$rb_user" --address "$rb_address" \
-  --attribute "$rb_attribute" --output "$RB_ROOT/generated"
+  --attribute "$rb_attribute" --report-format "$rb_format" --output "$RB_ROOT/generated"
 if [[ ! -d /Library/Audio/Plug-Ins/HAL/BlackHole2ch.driver ]]; then
   /usr/sbin/installer -pkg "$RB_ROOT/Dependencies/BlackHole2ch-0.7.1.pkg" -target /
 fi

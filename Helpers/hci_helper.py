@@ -49,9 +49,20 @@ class Frames:
 
 
 class RemoteReports:
-    def __init__(self, address, attribute):
+    # Consumer usages observed on the Jieli hid_mouse / 0.0.1 remote.
+    # Normalize them to the original remote's mapping IDs before IPC.
+    CONSUMER_BUTTONS = {
+        0x0042: 3, 0x0043: 4, 0x0044: 5, 0x0045: 6, 0x0041: 7,
+        0x0224: 11, 0x0223: 10, 0x00e9: 12, 0x00ea: 13, 0x00e2: 8,
+        0x0077: 14, 0x0078: 15, 0x019e: 1, 0x0189: 17,
+    }
+
+    def __init__(self, address, attribute, report_format="indexed"):
+        if report_format not in ("indexed", "consumer16"):
+            raise ValueError("Unsupported remote report format")
         self.address = bytes.fromhex(address.replace(":", ""))[::-1]
         self.attribute = attribute
+        self.report_format = report_format
         self.connections = set()
         self.fragments = {}
 
@@ -105,6 +116,14 @@ class RemoteReports:
         if len(att) < 3 or att[0] not in (0x1b, 0x1d) or struct.unpack_from("<H", att, 1)[0] != self.attribute:
             return None
         payload = list(att[3:])
+        if self.report_format == "consumer16":
+            if len(payload) != 2:
+                return None
+            usage = payload[0] | payload[1] << 8
+            if usage == 0:
+                return [0]
+            button = self.CONSUMER_BUTTONS.get(usage)
+            return [button] if button is not None else None
         return payload if 1 <= len(payload) <= 2 and all(value <= 17 for value in payload) else None
 
 
@@ -157,8 +176,8 @@ def peer_uid(connection):
 
 
 def session(connection, config):
+    decoder = RemoteReports(config["address"], config["attribute"], config.get("report_format", "indexed"))
     capture = Capture(config["packetlogger"])
-    decoder = RemoteReports(config["address"], config["attribute"])
     selector = selectors.DefaultSelector()
     selector.register(connection, selectors.EVENT_READ, "client")
     selector.register(capture.fd, selectors.EVENT_READ, "capture")
